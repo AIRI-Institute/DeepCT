@@ -7,13 +7,21 @@ import torch.nn as nn
 
 
 class DeepCT(nn.Module):
-    def __init__(self, sequence_length, n_genomic_features):
+    def __init__(
+        self,
+        sequence_length,
+        n_cell_types,
+        cell_type_embedding_length,
+        n_genomic_features,
+    ):
         """
         Based on a DeepSEA architecture (see https://github.com/FunctionLab/selene/blob/0.4.8/models/deepsea.py)
 
         Parameters
         ----------
         sequence_length : int
+        n_cell_types : int
+        cell_type_embedding_length : int
         n_genomic_features : int
         """
         super(DeepCT, self).__init__()
@@ -34,7 +42,14 @@ class DeepCT(nn.Module):
             nn.Dropout(p=0.5),
         )
 
-        # TODO: Add a fully connected network for the cell type.
+        self.cell_type_net = nn.Sequntial(
+            nn.Linear(n_cell_types, n_cell_types),
+            nn.ReLU(inplace=True),
+            nn.Linear(n_cell_types, n_cell_types),
+            nn.ReLU(inplace=True),
+            nn.Linear(n_cell_types, cell_type_embedding_length),
+            nn.ReLU(inplace=True),
+        )
 
         reduce_by = conv_kernel_size - 1
         pool_kernel_size = float(pool_kernel_size)
@@ -46,23 +61,40 @@ class DeepCT(nn.Module):
             - reduce_by
         )
 
-        # TODO: Update the number of input channels, based on the number of cell types.
         self.classifier = nn.Sequential(
-            nn.Linear(960 * self.n_channels, n_genomic_features),
+            nn.Linear(
+                960 * self.n_channels + cell_type_embedding_length, n_genomic_features
+            ),
             nn.ReLU(inplace=True),
             nn.Linear(n_genomic_features, n_genomic_features),
             nn.Sigmoid(),
         )
 
     def forward(self, x):
-        """Forward propagation of a batch."""
-        # TODO:
-        #   - Check that len(x) == 2;
-        #   - run the cell-type network;
-        #   - concatenate network outputs and pass it to the classifier network
-        out = self.conv_net(x)
-        reshape_out = out.view(out.size(0), 960 * self.n_channels)
-        predict = self.classifier(reshape_out)
+        """Forward propagation of a batch.
+
+        Parameters:
+        -----------
+        x : List[torch.Tensor]
+            x[0] corresponds to a sequence;
+            x[1] corresponds to a cell type.
+
+        """
+
+        # TODO: Check the x dimensions.
+
+        sequence_out = self.conv_net(x[0])
+        cell_type_embedding = self.cell_type_net(x[1])
+
+        reshaped_sequence_out = sequence_out.view(
+            sequence_out.size(0), 960 * self.n_channels
+        )
+
+        sequence_out_with_cell_type_embedding = torch.cat(
+            reshaped_sequence_out, cell_type_embedding
+        )
+
+        predict = self.classifier(sequence_out_with_cell_type_embedding)
         return predict
 
 
