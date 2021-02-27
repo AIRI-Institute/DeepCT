@@ -23,47 +23,57 @@ class DeepCT(nn.Module):
         self.conv_net = nn.Sequential(
             nn.Conv1d(4, 320, kernel_size=conv_kernel_size),
             nn.ReLU(inplace=True),
-            nn.MaxPool1d(
-                kernel_size=pool_kernel_size, stride=pool_kernel_size),
+            nn.MaxPool1d(kernel_size=pool_kernel_size, stride=pool_kernel_size),
             nn.Dropout(p=0.2),
-
             nn.Conv1d(320, 480, kernel_size=conv_kernel_size),
             nn.ReLU(inplace=True),
-            nn.MaxPool1d(
-                kernel_size=pool_kernel_size, stride=pool_kernel_size),
+            nn.MaxPool1d(kernel_size=pool_kernel_size, stride=pool_kernel_size),
             nn.Dropout(p=0.2),
-
             nn.Conv1d(480, 960, kernel_size=conv_kernel_size),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=0.5))
+            nn.Dropout(p=0.5),
+        )
+
+        # TODO: Add a fully connected network for the cell type.
 
         reduce_by = conv_kernel_size - 1
         pool_kernel_size = float(pool_kernel_size)
         self.n_channels = int(
             np.floor(
-                (np.floor(
-                    (sequence_length - reduce_by) / pool_kernel_size)
-                 - reduce_by) / pool_kernel_size)
-            - reduce_by)
+                (np.floor((sequence_length - reduce_by) / pool_kernel_size) - reduce_by)
+                / pool_kernel_size
+            )
+            - reduce_by
+        )
+
+        # TODO: Update the number of input channels, based on the number of cell types.
         self.classifier = nn.Sequential(
             nn.Linear(960 * self.n_channels, n_genomic_features),
             nn.ReLU(inplace=True),
             nn.Linear(n_genomic_features, n_genomic_features),
-            nn.Sigmoid())
+            nn.Sigmoid(),
+        )
 
     def forward(self, x):
-        """Forward propagation of a batch.
-        """
+        """Forward propagation of a batch."""
+        # TODO:
+        #   - Check that len(x) == 2;
+        #   - run the cell-type network;
+        #   - concatenate network outputs and pass it to the classifier network
         out = self.conv_net(x)
         reshape_out = out.view(out.size(0), 960 * self.n_channels)
         predict = self.classifier(reshape_out)
         return predict
 
+
 def criterion():
     """
     The criterion the model aims to minimize.
     """
+    # TODO: Update the criterion to evaluate only features available for the provided
+    # cell type.
     return nn.BCELoss()
+
 
 def get_optimizer(lr):
     """
@@ -72,5 +82,4 @@ def get_optimizer(lr):
     parameters (`model.parameters()`). We cannot initialize the optimizer
     until the model has been initialized.
     """
-    return (torch.optim.SGD,
-            {"lr": lr, "weight_decay": 1e-6, "momentum": 0.9})
+    return (torch.optim.SGD, {"lr": lr, "weight_decay": 1e-6, "momentum": 0.9})
