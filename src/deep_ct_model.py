@@ -42,7 +42,7 @@ class DeepCT(nn.Module):
             nn.Dropout(p=0.5),
         )
 
-        self.cell_type_net = nn.Sequntial(
+        self.cell_type_net = nn.Sequential(
             nn.Linear(n_cell_types, n_cell_types),
             nn.ReLU(inplace=True),
             nn.Linear(n_cell_types, n_cell_types),
