@@ -6,9 +6,11 @@ This module provides the `IntervalsSampler` class and supporting methods.
 import logging
 import random
 from collections import namedtuple
+from os import replace
 
 import numpy as np
 from selene_sdk.samplers.online_sampler import OnlineSampler
+from selene_sdk.samplers.samples_batch import SamplesBatch
 from selene_sdk.utils import get_indices_and_probabilities
 
 logger = logging.getLogger(__name__)
@@ -136,6 +138,8 @@ class IntervalsSampler(OnlineSampler):
     mode : str
         The current mode that the sampler is running in. Must be one of
         the modes listed in `modes`.
+    random_generator : numpy.random.Generator
+        Random values generator.
 
     """
 
@@ -174,6 +178,8 @@ class IntervalsSampler(OnlineSampler):
             output_dir=output_dir,
         )
 
+        self.random_generator = np.random.default_rng(self.seed)
+
         self._cell_type_index_by_feature_index = [None] * len(features)
         self._cell_type_by_index = {}
         self._index_by_cell_type = {}
@@ -190,6 +196,7 @@ class IntervalsSampler(OnlineSampler):
             self._cell_type_index_by_feature_index[
                 feature_index
             ] = self._index_by_cell_type[cell_type]
+        self._n_cell_types = len(self._cell_type_by_index)
 
         self._sample_from_mode = {}
         self._randcache = {}
@@ -308,9 +315,66 @@ class IntervalsSampler(OnlineSampler):
                 indices=indices, weights=weights
             )
 
-    def _retrieve(self, chrom, position):
+    def _check_retrieved_sequence(self, sequence, chrom, position) -> bool:
+        """Checks whether retrieved sequence is acceptable.
+
+        Parameters
+        ----------
+            sequence : numpy.ndarray
+                An array of shape [sequence_length, alphabet_size], defines a sequence.
+
         """
-        Retrieves samples around a position in the `reference_sequence`.
+        if sequence.shape[0] == 0:
+            logger.info(
+                'Full sequence centered at region "{0}" position '
+                "{1} could not be retrieved. Sampling again.".format(chrom, position)
+            )
+            return False
+        elif np.sum(sequence) / float(sequence.shape[0]) < 0.60:
+            logger.info(
+                "Over 30% of the bases in the sequence centered "
+                "at region \"{0}\" position {1} are ambiguous ('N'). "
+                "Sampling again.".format(chrom, position)
+            )
+            return False
+
+        return True
+
+    def _retrieve_positive_and_some_zero_samples(
+        self, targets, max_to_draw
+    ) -> np.array:
+        """Retrieves max possible amount of positive targets (not more than
+        `max_to_draw`) and some zero targets (not more than a number of selected
+        positives).
+
+        Returns
+        -------
+            numpy.array : Selected target indices without repetition.
+        """
+        positive_samples_to_retrieve = min(max_to_draw, len(np.nonzero(targets)[0]))
+        retrieved_positive_target_indices = self.random_generator.choice(
+            np.nonzero(targets)[0], positive_samples_to_retrieve, replace=False
+        )
+
+        negative_samples_to_retrieve = max(
+            min(
+                max_to_draw - positive_samples_to_retrieve,
+                positive_samples_to_retrieve,
+                len(targets) - positive_samples_to_retrieve,
+            ),
+            0,
+        )
+        retrieved_negative_target_indices = self.random_generator.choice(
+            np.where(targets == 0)[0], negative_samples_to_retrieve, replace=False
+        )
+
+        return np.concatenate(
+            (retrieved_positive_target_indices, retrieved_negative_target_indices)
+        )
+
+    def _retrieve(self, chrom, position, max_to_draw):
+        """
+        Retrieves a batch of samples around a position in the `reference_sequence`.
 
         Parameters
         ----------
@@ -319,23 +383,28 @@ class IntervalsSampler(OnlineSampler):
         position : int
             The position in the query region that we will search around
             for samples.
+        max_to_draw : int
+            An upper-bound for the number of retrieved samples.
+            NOTE: Can retrieve less or equal, but not more.
 
         Returns
         -------
-        retrieved_seq, retrieved_targets : \
-        tuple(numpy.ndarray, list(numpy.ndarray))
-            A tuple containing the numeric representation of the
-            sequence centered at the query position, as well as a list
-            of samples within this region that met the filtering
-            standards.
+        inputs, targets :\
+        list(tuple(numpy.ndarray, numpy.ndarray)), numpy.ndarray
+            Retrieved inputs and outputs. Inputs are represented as a list of sequence
+            and cell type pairs. Targets are represented as a single array. So the
+            length of inputs list equals to the length of targets array.
+
+            NOTE: Returns None if wasn't able to retrieve at this position.
 
         """
         bin_start = position - self._start_radius
         bin_end = position + self._end_radius
-        retrieved_targets = self.target.get_feature_data(chrom, bin_start, bin_end)
-        if not self.sample_negative and np.sum(retrieved_targets) == 0:
+        targets = self.target.get_feature_data(chrom, bin_start, bin_end)
+
+        if not self.sample_negative and np.sum(targets) == 0:
             logger.info(
-                "No features found in region surrounding "
+                "No features picked in region surrounding "
                 'region "{0}" position {1}. Sampling again.'.format(chrom, position)
             )
             return None
@@ -346,30 +415,33 @@ class IntervalsSampler(OnlineSampler):
         retrieved_seq = self.reference_sequence.get_encoding_from_coords(
             chrom, window_start, window_end, strand
         )
-        if retrieved_seq.shape[0] == 0:
-            logger.info(
-                'Full sequence centered at region "{0}" position '
-                "{1} could not be retrieved. Sampling again.".format(chrom, position)
-            )
-            return None
-        elif np.sum(retrieved_seq) / float(retrieved_seq.shape[0]) < 0.60:
-            logger.info(
-                "Over 30% of the bases in the sequence centered "
-                "at region \"{0}\" position {1} are ambiguous ('N'). "
-                "Sampling again.".format(chrom, position)
-            )
+
+        if not self._check_retrieved_sequence(retrieved_seq, chrom, position):
             return None
 
+        retrieved_target_indices = self._retrieve_positive_and_some_zero_samples(
+            targets, max_to_draw
+        )
+
         if self.mode in self._save_datasets:
+            # TODO(arlapin): Might need to change something here, if this is used.
             feature_indices = ";".join(
-                [str(f) for f in np.nonzero(retrieved_targets)[0]]
+                [str(f) for f in np.nonzero(targets[retrieved_target_indices])[0]]
             )
             self._save_datasets[self.mode].append(
                 [chrom, window_start, window_end, strand, feature_indices]
             )
             if len(self._save_datasets[self.mode]) > 200000:
                 self.save_dataset_to_file(self.mode)
-        return (retrieved_seq, retrieved_targets)
+
+        all_retrieved_inputs = []
+        for feature_index in retrieved_target_indices:
+            cell_type_index = self._cell_type_index_by_feature_index[feature_index]
+            cell_type_one_hot_encoding = np.zeros(self._n_cell_types)
+            cell_type_one_hot_encoding[cell_type_index] = 1.0
+            all_retrieved_inputs.append((retrieved_seq, cell_type_one_hot_encoding))
+
+        return (all_retrieved_inputs, targets[retrieved_target_indices])
 
     def _update_randcache(self, mode=None):
         """
@@ -387,7 +459,7 @@ class IntervalsSampler(OnlineSampler):
         """
         if not mode:
             mode = self.mode
-        self._randcache[mode]["cache_indices"] = np.random.choice(
+        self._randcache[mode]["cache_indices"] = self.random_generator.choice(
             self._sample_from_mode[mode].indices,
             size=len(self._sample_from_mode[mode].indices),
             replace=True,
@@ -408,19 +480,24 @@ class IntervalsSampler(OnlineSampler):
 
         Returns
         -------
-        sequences, targets : tuple(numpy.ndarray, numpy.ndarray)
-            A tuple containing the numeric representation of the
-            sequence examples and their corresponding labels. The
-            shape of `sequences` will be
-            :math:`B \\times L \\times N`, where :math:`B` is
-            `batch_size`, :math:`L` is the sequence length, and
-            :math:`N` is the size of the sequence type's alphabet.
-            The shape of `targets` will be :math:`B \\times F`,
-            where :math:`F` is the number of features.
+        SamplesBatch
+            A batch containing the numeric representation of the sequence examples,
+            one-hot encodings for cell types, and their corresponding targets.
+
+            The shape of `sequences` will be :math:`B \\times L \\times N`, where
+            :math:`B` is `batch_size`, :math:`L` is the sequence length, and :math:`N`
+            is the size of the sequence type's alphabet.
+
+            The shape of `cell_types` will be :math:`B \\times C`, where :math:`C` is
+            a number of cell types in the provided features.
+
+            The shape of `targets` will be :math:`B \\times 1`,
 
         """
-        sequences = np.zeros((batch_size, self.sequence_length, 4))
-        targets = np.zeros((batch_size, self.n_features))
+        sequence_batch = np.zeros((batch_size, self.sequence_length, 4))
+        cell_types_batch = np.zeros((batch_size, self._n_cell_types))
+        targets_batch = np.zeros((batch_size, 1))
+
         n_samples_drawn = 0
         while n_samples_drawn < batch_size:
             sample_index = self._randcache[self.mode]["sample_next"]
@@ -439,11 +516,21 @@ class IntervalsSampler(OnlineSampler):
             chrom = interval_info[0]
             position = int(interval_info[1] + random.uniform(0, 1) * interval_length)
 
-            retrieve_output = self._retrieve(chrom, position)
+            retrieve_output = self._retrieve(
+                chrom, position, batch_size - n_samples_drawn
+            )
             if not retrieve_output:
                 continue
-            seq, seq_targets = retrieve_output
-            sequences[n_samples_drawn, :, :] = seq
-            targets[n_samples_drawn, :] = seq_targets
-            n_samples_drawn += 1
-        return (sequences, targets)
+            inputs, targets = retrieve_output
+
+            for (sequence, cell_type), target in zip(inputs, targets):
+                sequence_batch[n_samples_drawn, :, :] = sequence
+                cell_types_batch[n_samples_drawn, :] = cell_type
+                targets_batch[n_samples_drawn, :] = target
+                n_samples_drawn += 1
+
+        return SamplesBatch(
+            sequence_batch,
+            other_input_batches={"cell_type_batch": cell_types_batch},
+            target_batch=targets_batch,
+        )
