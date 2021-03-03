@@ -174,6 +174,23 @@ class IntervalsSampler(OnlineSampler):
             output_dir=output_dir,
         )
 
+        self._cell_type_index_by_feature_index = [None] * len(features)
+        self._cell_type_by_index = {}
+        self._index_by_cell_type = {}
+        for feature_index, feature in enumerate(features):
+            cell_type, _, addon = feature.split("|")
+            if addon != "None":
+                cell_type = cell_type + "_" + addon
+
+            if cell_type not in self._index_by_cell_type:
+                index = len(self._index_by_cell_type)
+                self._index_by_cell_type[cell_type] = index
+                self._cell_type_by_index[index] = cell_type
+
+            self._cell_type_index_by_feature_index[
+                feature_index
+            ] = self._index_by_cell_type[cell_type]
+
         self._sample_from_mode = {}
         self._randcache = {}
         for mode in self.modes:
