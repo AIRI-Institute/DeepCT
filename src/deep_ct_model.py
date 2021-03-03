@@ -75,23 +75,23 @@ class DeepCT(nn.Module):
 
         Parameters:
         -----------
-        x : List[torch.Tensor]
-            x[0] corresponds to a sequence;
-            x[1] corresponds to a cell type.
+        x : dict(str, torch.Tensor)
+            x['sequence_batch'] corresponds to a batch of encoded sequences.
+            x['cell_type_batch'] corresponds to a batch of one-hot cell type encodings.
 
         """
 
         # TODO: Check the x dimensions.
 
-        sequence_out = self.conv_net(x[0])
-        cell_type_embedding = self.cell_type_net(x[1])
+        sequence_out = self.conv_net(x["sequence_batch"])
+        cell_type_embedding = self.cell_type_net(x["cell_type_batch"])
 
         reshaped_sequence_out = sequence_out.view(
             sequence_out.size(0), 960 * self.n_channels
         )
 
         sequence_out_with_cell_type_embedding = torch.cat(
-            reshaped_sequence_out, cell_type_embedding
+            (reshaped_sequence_out, cell_type_embedding), 1
         )
 
         predict = self.classifier(sequence_out_with_cell_type_embedding)
