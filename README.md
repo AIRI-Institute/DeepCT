@@ -9,13 +9,14 @@ git clone https://github.com/arlapin/selene.git
 cd selene
 git checkout arlapin/wrap_to_tensor
 ```
+2. Install `selene` as per [official instruction](https://github.com/FunctionLab/selene/blob/master/README.md#installing-selene-from-source)
 
-2. Add `selene` to your `$PYTHONPATH`:
+3. Add `selene` to your `$PYTHONPATH`:
 ```zsh
 $PYTHONPATH=$PYTHONPATH:/home/$USER/selene
 ```
 
-3. Clone this repo
+4. Clone this repo
 
 5. Run DeepCT:
 ```zsh
