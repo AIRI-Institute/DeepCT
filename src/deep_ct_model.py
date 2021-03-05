@@ -43,12 +43,7 @@ class DeepCT(nn.Module):
         )
 
         self.cell_type_net = nn.Sequential(
-            nn.Linear(n_cell_types, n_cell_types),
-            nn.ReLU(inplace=True),
-            nn.Linear(n_cell_types, n_cell_types),
-            nn.ReLU(inplace=True),
             nn.Linear(n_cell_types, cell_type_embedding_length),
-            nn.ReLU(inplace=True),
         )
 
         reduce_by = conv_kernel_size - 1

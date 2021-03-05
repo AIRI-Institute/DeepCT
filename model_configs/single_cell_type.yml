@@ -6,7 +6,7 @@ model: {
     class_args: {
         sequence_length: 1000,
         n_cell_types: 125,
-        cell_type_embedding_length: 10,
+        cell_type_embedding_length: 32,
         n_genomic_features: 1,
     },
     non_strand_specific: mean
@@ -37,10 +37,10 @@ train_model: !obj:selene_sdk.TrainModel {
     n_validation_samples: 16000,
     n_test_samples: 640000,
     use_cuda: True,
-    data_parallel: True,
+    data_parallel: False,
     logging_verbosity: 2
 }
 output_dir: DeepCT_outputs/
 random_seed: 1447
-create_subdirectory: False
+create_subdirectory: True
 ...
