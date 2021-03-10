@@ -27,6 +27,8 @@ class DeepCT(nn.Module):
         super(DeepCT, self).__init__()
         conv_kernel_size = 8
         pool_kernel_size = 4
+        sequence_embedding_length = 128
+        final_embedding_length = 128
 
         self.conv_net = nn.Sequential(
             nn.Conv1d(4, 320, kernel_size=conv_kernel_size),
@@ -42,10 +44,6 @@ class DeepCT(nn.Module):
             nn.Dropout(p=0.5),
         )
 
-        self.cell_type_net = nn.Sequential(
-            nn.Linear(n_cell_types, cell_type_embedding_length),
-        )
-
         reduce_by = conv_kernel_size - 1
         pool_kernel_size = float(pool_kernel_size)
         self.n_channels = int(
@@ -56,12 +54,22 @@ class DeepCT(nn.Module):
             - reduce_by
         )
 
+        self.sequence_net = nn.Sequential(
+            nn.Linear(960 * self.n_channels, sequence_embedding_length),
+            nn.ReLU(inplace=True),
+        )
+
+        self.cell_type_net = nn.Sequential(
+            nn.Linear(n_cell_types, cell_type_embedding_length),
+        )
+
         self.classifier = nn.Sequential(
             nn.Linear(
-                960 * self.n_channels + cell_type_embedding_length, n_genomic_features
+                sequence_embedding_length + cell_type_embedding_length,
+                final_embedding_length,
             ),
             nn.ReLU(inplace=True),
-            nn.Linear(n_genomic_features, n_genomic_features),
+            nn.Linear(final_embedding_length, n_genomic_features),
             nn.Sigmoid(),
         )
 
@@ -75,21 +83,19 @@ class DeepCT(nn.Module):
             x['cell_type_batch'] corresponds to a batch of one-hot cell type encodings.
 
         """
-
-        # TODO: Check the x dimensions.
-
         sequence_out = self.conv_net(x["sequence_batch"])
-        cell_type_embedding = self.cell_type_net(x["cell_type_batch"])
-
         reshaped_sequence_out = sequence_out.view(
             sequence_out.size(0), 960 * self.n_channels
         )
+        sequence_embedding = self.sequence_net(reshaped_sequence_out)
 
-        sequence_out_with_cell_type_embedding = torch.cat(
-            (reshaped_sequence_out, cell_type_embedding), 1
+        cell_type_embedding = self.cell_type_net(x["cell_type_batch"])
+
+        sequence_and_cell_type_embeddings = torch.cat(
+            (sequence_embedding, cell_type_embedding), 1
         )
 
-        predict = self.classifier(sequence_out_with_cell_type_embedding)
+        predict = self.classifier(sequence_and_cell_type_embeddings)
         return predict
 
 
@@ -109,4 +115,8 @@ def get_optimizer(lr):
     parameters (`model.parameters()`). We cannot initialize the optimizer
     until the model has been initialized.
     """
-    return (torch.optim.SGD, {"lr": lr, "weight_decay": 1e-6, "momentum": 0.9})
+    # Option 1:
+    # return (torch.optim.SGD, {"lr": lr, "weight_decay": 1e-6, "momentum": 0.9})
+
+    # Option 2:
+    return (torch.optim.Adam, {"lr": lr})
