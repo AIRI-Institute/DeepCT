@@ -1,98 +1,42 @@
 """ A script to plot validation metrics produced by the model.
 """
+from collections import namedtuple
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
-STEPS_PER_ITERATION = 5000
+_STEPS_PER_ITERATION = 5000
 
-# NOTE: Replace these with your files.
-files = [
-    "new_sampler_0008.txt",
-    "new_sampler_00008.txt",
-    "old_sampler_0008.txt",
-    "old_sampler_00008.txt",
-]
+TraceSettings = namedtuple("TraceSettings", ["y", "name", "color"])
 
-# NOTE: Replace these with a grid you want to display.
-rows = [1, 1, 2, 2]
-cols = [1, 2, 1, 2]
-fig = make_subplots(rows=2, cols=2, subplot_titles=files)
 
-for index, filename in enumerate(files):
+def plot_metrics(filename):
     df = pd.read_csv(filename, sep="\t")
-    recall = df.recall
-    precision = df.precision
-    accuracy = df.accuracy
-    f1 = 2 * (precision * recall) / (precision + recall)
-    loss = df.loss
+    df["f1"] = 2 * (df.precision * df.recall) / (df.precision + df.recall)
 
-    fig.add_trace(
-        go.Scatter(
-            x=np.array(range(len(df))) * STEPS_PER_ITERATION,
-            y=recall,
-            mode="lines",
-            name="recall",
-            line_color="red",
-            showlegend=(index == 0),
-        ),
-        row=rows[index],
-        col=cols[index],
-    )
+    trace_metrics = [
+        TraceSettings(y=df.recall, name="recall", color="red"),
+        TraceSettings(y=df.precision, name="precision", color="blue"),
+        TraceSettings(y=df.accuracy, name="accuracy", color="green"),
+        TraceSettings(y=df.f1, name="f1", color="black"),
+        TraceSettings(y=df.loss, name="loss", color="orange"),
+        TraceSettings(y=df.roc_auc, name="roc_auc", color="darkcyan"),
+    ]
 
-    fig.add_trace(
-        go.Scatter(
-            x=np.array(range(len(df))) * STEPS_PER_ITERATION,
-            y=precision,
-            mode="lines",
-            name="precision",
-            line_color="blue",
-            showlegend=(index == 0),
-        ),
-        row=rows[index],
-        col=cols[index],
-    )
+    fig = go.Figure()
 
-    fig.add_trace(
-        go.Scatter(
-            x=np.array(range(len(df))) * STEPS_PER_ITERATION,
-            y=accuracy,
-            mode="lines",
-            name="accuracy",
-            line_color="green",
-            showlegend=(index == 0),
-        ),
-        row=rows[index],
-        col=cols[index],
-    )
+    for trace_metric in trace_metrics:
+        fig.add_trace(
+            go.Scatter(
+                x=np.array(range(len(df))) * _STEPS_PER_ITERATION,
+                y=trace_metric.y,
+                mode="lines",
+                name=trace_metric.name,
+                line_color=trace_metric.color,
+            )
+        )
 
-    fig.add_trace(
-        go.Scatter(
-            x=np.array(range(len(df))) * STEPS_PER_ITERATION,
-            y=f1,
-            mode="lines",
-            name="F1",
-            line_color="black",
-            showlegend=(index == 0),
-        ),
-        row=rows[index],
-        col=cols[index],
-    )
+    fig.update_layout(title=filename, xaxis_title="iteration")
 
-    fig.add_trace(
-        go.Scatter(
-            x=np.array(range(len(df))) * STEPS_PER_ITERATION,
-            y=loss,
-            mode="lines",
-            name="loss",
-            line_color="orange",
-            showlegend=(index == 0),
-        ),
-        row=rows[index],
-        col=cols[index],
-    )
-
-    fig.update_xaxes(title_text="iteration", row=rows[index], col=cols[index])
-
-fig.show()
+    return fig
