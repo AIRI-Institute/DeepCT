@@ -33,20 +33,28 @@ class DeepCT(nn.Module):
         self.conv_net = nn.Sequential(
             nn.Conv1d(4, 320, kernel_size=conv_kernel_size),
             nn.ReLU(inplace=True),
-            nn.MaxPool1d(kernel_size=pool_kernel_size, stride=pool_kernel_size),
-            nn.Dropout(p=0.2),
-            nn.Conv1d(320, 480, kernel_size=conv_kernel_size),
+            nn.Conv1d(320, 320, kernel_size=conv_kernel_size),
             nn.ReLU(inplace=True),
             nn.MaxPool1d(kernel_size=pool_kernel_size, stride=pool_kernel_size),
+            nn.BatchNorm1d(320),
+            nn.Conv1d(320, 480, kernel_size=conv_kernel_size),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(480, 480, kernel_size=conv_kernel_size),
+            nn.ReLU(inplace=True),
+            nn.MaxPool1d(kernel_size=pool_kernel_size, stride=pool_kernel_size),
+            nn.BatchNorm1d(480),
             nn.Dropout(p=0.2),
             nn.Conv1d(480, 960, kernel_size=conv_kernel_size),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=0.5),
+            nn.Conv1d(960, 960, kernel_size=conv_kernel_size),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm1d(960),
+            nn.Dropout(p=0.2),
         )
 
-        reduce_by = conv_kernel_size - 1
+        reduce_by = 2 * (conv_kernel_size - 1)
         pool_kernel_size = float(pool_kernel_size)
-        self.n_channels = int(
+        self._n_channels = int(
             np.floor(
                 (np.floor((sequence_length - reduce_by) / pool_kernel_size) - reduce_by)
                 / pool_kernel_size
@@ -55,7 +63,7 @@ class DeepCT(nn.Module):
         )
 
         self.sequence_net = nn.Sequential(
-            nn.Linear(960 * self.n_channels, sequence_embedding_length),
+            nn.Linear(960 * self._n_channels, sequence_embedding_length),
             nn.ReLU(inplace=True),
         )
 
@@ -69,6 +77,7 @@ class DeepCT(nn.Module):
                 final_embedding_length,
             ),
             nn.ReLU(inplace=True),
+            nn.BatchNorm1d(final_embedding_length),
             nn.Linear(final_embedding_length, n_genomic_features),
             nn.Sigmoid(),
         )
@@ -85,7 +94,7 @@ class DeepCT(nn.Module):
         """
         sequence_out = self.conv_net(x["sequence_batch"])
         reshaped_sequence_out = sequence_out.view(
-            sequence_out.size(0), 960 * self.n_channels
+            sequence_out.size(0), 960 * self._n_channels
         )
         sequence_embedding = self.sequence_net(reshaped_sequence_out)
 
