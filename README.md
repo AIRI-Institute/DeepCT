@@ -7,7 +7,7 @@
 cd ~
 git clone https://github.com/arlapin/selene.git
 cd selene
-git checkout arlapin/wrap_to_tensor
+git checkout arlapin/dev
 ```
 2. Install `selene` as per [official instruction](https://github.com/FunctionLab/selene/blob/master/README.md#installing-selene-from-source)
 
