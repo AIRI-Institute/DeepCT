@@ -18,8 +18,8 @@ $PYTHONPATH=$PYTHONPATH:/home/$USER/selene
 
 4. Clone this repo
 
-5. Run DeepCT:
+5. Run DeepCT on selected GPU:
 ```zsh
 cd ~/DeepCT
-python -u ~/selene/selene_sdk/cli.py model_configs/single_cell_type.yml --lr=0.08
+CUDA_VISIBLE_DEVICES=0 python -u ~/selene/selene_sdk/cli.py model_configs/single_cell_type.yml --lr=0.08
 ```
