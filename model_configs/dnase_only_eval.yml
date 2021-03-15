@@ -1,6 +1,5 @@
 ---
-ops: [train, evaluate]
-lr: 0.00001
+ops: [evaluate]
 model: {
     path: src/deep_ct_model.py,
     class: DeepCT,
@@ -14,7 +13,7 @@ model: {
     },
     non_strand_specific: mean
 }
-sampler: !obj:src.deep_ct_sampler.IntervalsSampler {
+sampler: !obj:src.samplers.dnase_only_evaluation_sampler.DNaseOnlyEvaluationSampler {
     reference_sequence: !obj:selene_sdk.sequences.Genome {
         input_path: /mnt/datasets/DeepCT/male.hg19.fasta,
         blacklist_regions: hg19
@@ -30,27 +29,28 @@ sampler: !obj:src.deep_ct_sampler.IntervalsSampler {
     sequence_length: 1000,
     center_bin_to_predict: 200,
     feature_thresholds: 0.5,
-    mode: train,
 }
-train_model: !obj:selene_sdk.TrainModel {
-    batch_size: 64,
-    max_steps: 960000,
-    report_stats_every_n_steps: 5000,
+evaluate_model: !obj:selene_sdk.EvaluateModel {
+    features:  !obj:selene_sdk.utils.load_features_list {
+        input_path: /mnt/datasets/DeepCT/dnase_features/distinct_features.txt,
+    },
+    # This should be equal to (DeepSEA's n_test_samples) * n_cell_types
+    n_test_samples: 1125000,
+    trained_model_path: /home/arlapin/DeepCT/DeepCT_outputs/0_00001_cell_type_embedding_32/best_model.pth.tar,
+    # NOTE: Should be a multiple of n_cell_types.
+    batch_size: 2000,
     report_gt_feature_n_positives: 0,
-    n_validation_samples: 16000,
-    n_test_samples: 640000,
     use_cuda: True,
-    data_parallel: False,
-    logging_verbosity: 2,
+    data_parallel: True,
+    output_dir: DeepCT_outputs/DeepCT_evaluation/,
     metrics: {
         accuracy: !import src.metrics.accuracy_score,
+        average_precision: !import sklearn.metrics.average_precision_score,
         f1: !import src.metrics.f1_score,
         precision: !import src.metrics.precision_score,
         recall: !import src.metrics.recall_score,
         roc_auc: !import sklearn.metrics.roc_auc_score,
     },
 }
-output_dir: DeepCT_outputs/
 random_seed: 1447
-create_subdirectory: True
 ...
