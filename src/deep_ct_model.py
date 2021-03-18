@@ -11,7 +11,9 @@ class DeepCT(nn.Module):
         self,
         sequence_length,
         n_cell_types,
+        sequence_embedding_length,
         cell_type_embedding_length,
+        final_embedding_length,
         n_genomic_features,
     ):
         """
@@ -20,15 +22,18 @@ class DeepCT(nn.Module):
         Parameters
         ----------
         sequence_length : int
+            Length of input sequence.
         n_cell_types : int
+            Number of cell types.
+        sequence_embedding_length : int
         cell_type_embedding_length : int
+        final_embedding_length : int
         n_genomic_features : int
+            Number of target features.
         """
         super(DeepCT, self).__init__()
         conv_kernel_size = 8
         pool_kernel_size = 4
-        sequence_embedding_length = 128
-        final_embedding_length = 128
 
         self.conv_net = nn.Sequential(
             nn.Conv1d(4, 320, kernel_size=conv_kernel_size),
