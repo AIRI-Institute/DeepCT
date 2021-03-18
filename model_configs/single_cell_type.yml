@@ -1,12 +1,15 @@
 ---
 ops: [train, evaluate]
+lr: 0.00001
 model: {
     path: src/deep_ct_model.py,
     class: DeepCT,
     class_args: {
         sequence_length: 1000,
         n_cell_types: 125,
+        sequence_embedding_length: 128,
         cell_type_embedding_length: 32,
+        final_embedding_length: 128,
         n_genomic_features: 1,
     },
     non_strand_specific: mean
