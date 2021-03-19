@@ -1,10 +1,5 @@
 import os
-
-
-def get_tmp_filename(filename):
-    tmp_name = f"tmp_{os.path.basename(filename)}"
-    path = os.path.split(filename)[:-1]
-    return os.path.join(*path, tmp_name)
+import tempfile
 
 
 def gaps_from_fasta(fasta_path, gaps_path):
@@ -15,28 +10,24 @@ def gaps_from_fasta(fasta_path, gaps_path):
     cur_chr = None
     cur_N_start = None
     cur_idx = 0
-    with open(fasta_path) as f:
-        with open(gaps_path, "w") as f2:
-            for line in f:
-                if line[0] == ">":
-                    if cur_N_start is not None:
-                        f2.write(
-                            "\t".join([cur_chr, str(cur_N_start), str(cur_idx - 1)])
-                        )
-                        f2.write("\n")
-                    cur_chr = line[1:].rstrip()
+    with open(fasta_path) as f1, open(gaps_path, "w") as f2:
+        for line in f1:
+            if line[0] == ">":
+                if cur_N_start is not None:
+                    f2.write("\t".join([cur_chr, str(cur_N_start), str(cur_idx - 1)]))
+                    f2.write("\n")
+                cur_chr = line[1:].rstrip()
+                cur_N_start = None
+                cur_idx = 0
+                continue
+            for c in line.rstrip():
+                if c == "N" and cur_N_start is None:
+                    cur_N_start = cur_idx
+                elif c != "N" and cur_N_start is not None:
+                    f2.write("\t".join([cur_chr, str(cur_N_start), str(cur_idx)]))
+                    f2.write("\n")
                     cur_N_start = None
-                    cur_idx = 0
-                    # print(f'reached {cur_chr}')
-                    continue
-                for c in line.rstrip():
-                    if c == "N" and cur_N_start is None:
-                        cur_N_start = cur_idx
-                    elif c != "N" and cur_N_start is not None:
-                        f2.write("\t".join([cur_chr, str(cur_N_start), str(cur_idx)]))
-                        f2.write("\n")
-                        cur_N_start = None
-                    cur_idx += 1
+                cur_idx += 1
 
 
 def elongate_intervals(short_intervals_path, long_intervals_path, padding=500):
@@ -44,18 +35,20 @@ def elongate_intervals(short_intervals_path, long_intervals_path, padding=500):
     Make intervals from `short_intervals_path` longer
     by `padding` from both sides and write to `long_intervals_path`
     """
-    tmp_long_intervals_path = get_tmp_filename(long_intervals_path)
-    with open(short_intervals_path) as f1:
-        with open(tmp_long_intervals_path, "w") as f2:
-            for line in f1:
-                chrom, start, end = line.split()
-                start = max(0, int(start) - padding)
-                end = int(end) + padding
-                f2.write(f"{chrom}\t{start}\t{end}\n")
-
+    with open(short_intervals_path) as f1, tempfile.NamedTemporaryFile(
+        "w", delete=False
+    ) as f2:
+        for line in f1:
+            split_line = line.rstrip().split("\t")
+            chrom, start, end = split_line[:3]
+            line_tail = split_line[4:]
+            start = max(0, int(start) - padding)
+            end = int(end) + padding
+            f2.write("\t".join([chrom, str(start), str(end), *line_tail]))
+            f2.write("\n")
     # merge intervals
-    os.system(f"bedtools merge -i {tmp_long_intervals_path} > {long_intervals_path}")
-    os.system(f"rm {tmp_long_intervals_path}")
+    os.system(f"bedtools merge -i {f2.name} > {long_intervals_path}")
+    os.unlink(f2.name)
 
 
 def create_blacklist(fasta_gaps_path, encode_blacklist_path, blacklist_path):
@@ -65,12 +58,11 @@ def create_blacklist(fasta_gaps_path, encode_blacklist_path, blacklist_path):
     and write to `blacklist_path`
     """
     os.system(f"cat {fasta_gaps_path} {encode_blacklist_path} > {blacklist_path}")
-    tmp_blacklist_path = get_tmp_filename(blacklist_path)
-    os.system(
-        f"sort -k1,1V -k2,2n -k3,3n {blacklist_path} | cut -f1-3 > {tmp_blacklist_path}"
-    )
-    os.system(f"bedtools merge -i {tmp_blacklist_path} > {blacklist_path}")
-    os.system(f"rm {tmp_blacklist_path}")
+    f = tempfile.NamedTemporaryFile("w", delete=False)
+    os.system(f"sort -k1,1V -k2,2n -k3,3n {blacklist_path} | cut -f1-3 > {f.name}")
+    os.system(f"bedtools merge -i {f.name} > {blacklist_path}")
+    f.close()
+    os.unlink(f.name)
 
 
 def create_targets(
@@ -105,15 +97,16 @@ def create_targets(
     """
 
     distinct_features = set()
-    tmp_target_path = get_tmp_filename(target_path)
-    with open(all_targets_path) as f:
-        with open(tmp_target_path, "w") as f2:
-            for line in f:
-                feature_name = line.split("|")[1]
-                if feature_name in target_features:
-                    f2.write(line)
-                    distinct_feature = line.split()[-1].rstrip()
-                    distinct_features.add(distinct_feature)
+    f = tempfile.NamedTemporaryFile("w", delete=False)
+    with open(all_targets_path) as f1, tempfile.NamedTemporaryFile(
+        "w", delete=False
+    ) as f2:
+        for line in f1:
+            feature_name = line.split("|")[1]
+            if feature_name in target_features:
+                f2.write(line)
+                distinct_feature = line.split()[-1].rstrip()
+                distinct_features.add(distinct_feature)
 
     with open(distinct_features_path, "w") as f:
         for distinct_feature in distinct_features:
@@ -121,14 +114,14 @@ def create_targets(
             f.write("\n")
 
     os.system(
-        f"bedtools subtract -a {tmp_target_path} -b {blacklist_intervals_path} | \
+        f"bedtools subtract -a {f2.name} -b {blacklist_intervals_path} | \
         sort -k1,1V -k2,2n -k3,3n > {target_path}"
     )
+    os.unlink(f2.name)
     os.system(
         f"cut -f1-3 {target_path} | bedtools merge > {target_sampling_intervals_path}"
     )
     os.system(f"bgzip -c {target_path} > {target_path}.gz")
-    os.system(f"rm {tmp_target_path}")
 
 
 def full_target_file_pipeline(
@@ -139,11 +132,12 @@ def full_target_file_pipeline(
     target_path="sorted_data.bed",
     target_sampling_intervals_path="target_intervals.bed",
     distinct_features_path="distinct_features.txt",
+    elongate_encode_blacklist=True,
 ):
     """
     Full pipeline of target files generation from target features
     """
-    bed_files_path = os.path.join(*(os.path.split(target_path)[:-1]))
+    bed_files_path = os.path.dirname(target_path)
 
     # find gaps in fasta
     gaps_path = os.path.join(bed_files_path, "gaps.bed")
@@ -153,6 +147,17 @@ def full_target_file_pipeline(
     # any unknown sites in the dataset
     long_gaps_path = os.path.join(bed_files_path, "long_gaps.bed")
     elongate_intervals(gaps_path, long_gaps_path, padding=500)
+
+    # elongate encode blacklist to avoid using
+    # any blacklisted sites in the dataset
+    if elongate_encode_blacklist:
+        long_encode_blacklist_path = os.path.join(
+            bed_files_path, f"long_{os.path.basename(encode_blacklist_path)}"
+        )
+        elongate_intervals(
+            encode_blacklist_path, long_encode_blacklist_path, padding=500
+        )
+        encode_blacklist_path = long_encode_blacklist_path
 
     # create blacklist from fasta gaps and ENCODE blacklist
     blacklist_path = os.path.join(bed_files_path, "blacklist.bed")
