@@ -1,4 +1,3 @@
-# TODO: add sampler for dataloaders with shuffle=True
 import bisect
 
 import numpy as np
@@ -217,7 +216,6 @@ class EncodeDataset(torch.utils.data.Dataset):
         )
 
         if not self._check_retrieved_sequence(retrieved_seq, chrom, position):
-            print(chrom, window_start, window_end)
             return None
 
         return retrieved_seq, cell_type, target, target_mask
@@ -251,7 +249,87 @@ class EncodeDataset(torch.utils.data.Dataset):
         return True
 
     def _construct_ref_genome(self):
-        return Genome(self.reference_sequence_path, blacklist_regions="hg19")
+        return Genome(self.reference_sequence_path)
+
+
+class LargeRandomSampler(torch.utils.data.RandomSampler):
+    """
+    Samples elements randomly by splitting the dataset into chunks and permuting
+    indices within these chunks. If without replacement, then sample from a
+    dataset shuffled in chunks.
+    If with replacement, then user can specify `num_samples` to draw.
+
+    Parameters
+    ----------
+    reference_sequence_path : str
+        Path to reference sequence `fasta` file from which to create examples.
+    data_source : Dataset
+        Dataset to sample from.
+    replacement : bool
+        Samples are drawn on-demand with replacement if ``True``,
+        default=``False``.
+    num_samples : int
+        Number of samples to draw, default=`len(dataset)`. This argument
+        is supposed to be specified only when `replacement` is ``True``.
+    generator : Generator
+        Generator used in sampling.
+    chunk_size : int
+        Size of chunks that dataset is divided into for shuffling.
+    """
+
+    def __init__(
+        self,
+        data_source,
+        replacement=False,
+        num_samples=None,
+        generator=None,
+        chunk_size=10000000,
+    ):
+        super().__init__(data_source, replacement, num_samples, generator)
+
+        self.chunk_size = chunk_size
+        self.m_chunks = (len(self.data_source) - 1) // self.chunk_size + 1
+
+    def __iter__(self):
+        n = len(self.data_source)
+        if self.generator is None:
+            generator = torch.Generator()
+            generator.manual_seed(
+                int(torch.empty((), dtype=torch.int64).random_().item())
+            )
+        else:
+            generator = self.generator
+
+        if self.replacement:
+            for _ in range(self.num_samples // 32):
+                yield from torch.randint(
+                    high=n, size=(32,), dtype=torch.int64, generator=generator
+                ).tolist()
+            yield from torch.randint(
+                high=n,
+                size=(self.num_samples % 32,),
+                dtype=torch.int64,
+                generator=generator,
+            ).tolist()
+        else:
+            self.chunks_order = self._generate_chunks_order()
+            for chunk_idx in self.chunks_order:
+                self.cur_chunk = chunk_idx
+                chunk_offset = self.chunk_size * self.cur_chunk
+                chunk_perm = self._permute_chunk(self.cur_chunk)
+                for idx in chunk_perm:
+                    yield chunk_offset + idx.item()
+
+    def _generate_chunks_order(self):
+        return torch.randperm(self.m_chunks, generator=self.generator).tolist()
+
+    def _permute_chunk(self, chunk_idx):
+        n = len(self.data_source)
+        if chunk_idx == self.m_chunks - 1:
+            chunk_size = n % self.chunk_size
+        else:
+            chunk_size = self.chunk_size
+        return torch.randperm(chunk_size, generator=self.generator)
 
 
 def encode_worker_init_fn(worker_id):
