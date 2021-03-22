@@ -5,6 +5,8 @@ import torch
 from selene_sdk.sequences import Genome
 from selene_sdk.targets import GenomicFeatures
 
+_FEATURE_NOT_PRESENT = -1
+
 
 class EncodeDataset(torch.utils.data.Dataset):
     """
@@ -18,12 +20,14 @@ class EncodeDataset(torch.utils.data.Dataset):
         Path to tabix-indexed, compressed BED file (`*.bed.gz`) of genomic
         coordinates mapped to the genomic features we want to predict.
     distinct_features : list(str)
-        List of distinct feature|cell_type pairs available.
+        List of distinct cell_type|feature_name|info combinations available,
+        e.g. `["K562|ZBTB33|None", "HCF|DNase|None", "HUVEC|DNase|None"]`.
     target_features: list(str)
-        List of names of features we aim to predict.
-    intervals : str
-        Intervals to sample from in the format `(chrom, start, end)`.
-    transforms: callable, optional
+        List of names of features we aim to predict, e.g. ["CTCF", "DNase"].
+    intervals : list(tuple)
+        Intervals to sample from in the format `(chrom, start, end)`,
+        e.g. [("chr1", 550, 590), ("chr2", 6100, 6315)].
+    transform: callable, optional
         A callback function that takes `sequence, cell_type,
         feature_values, feature_mask` as arguments and returns
         their transformed version.
@@ -72,7 +76,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         distinct_features,
         target_features,
         intervals,
-        transforms=None,
+        transform=None,
         sequence_length=1000,
         center_bin_to_predict=200,
         feature_thresholds=0.5,
@@ -83,25 +87,23 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.target = GenomicFeatures(
             target_path, distinct_features, feature_thresholds=feature_thresholds
         )
-        self.transform = transforms
+        self.transform = transform
 
         self.sequence_length = sequence_length
         self.center_bin_to_predict = center_bin_to_predict
         bin_radius = int(self.center_bin_to_predict / 2)
         self._start_radius = bin_radius
-        if self.center_bin_to_predict % 2 == 0:
-            self._end_radius = bin_radius
-        else:
-            self._end_radius = bin_radius + 1
+        self._end_radius = bin_radius + self.center_bin_to_predict % 2
+
         self.strand = strand
-        self._surrounding_sequence_radius = int(
-            (self.sequence_length - self.center_bin_to_predict) / 2
-        )
+        self._surrounding_sequence_radius = (
+            self.sequence_length - self.center_bin_to_predict
+        ) // 2
 
         self._cell_types = []
         cell_type_indices_by_feature_index = [[] for i in range(len(target_features))]
-        for feature_index, feature in enumerate(distinct_features):
-            feature_description = feature.split("|")
+        for distinct_feature_index, distinct_feature in enumerate(distinct_features):
+            feature_description = distinct_feature.split("|")
             feature_name = feature_description[1]
             if feature_name not in target_features:
                 continue
@@ -112,7 +114,7 @@ class EncodeDataset(torch.utils.data.Dataset):
             if cell_type not in self._cell_types:
                 self._cell_types.append(cell_type)
                 for feature_cell_type_indices in cell_type_indices_by_feature_index:
-                    feature_cell_type_indices.append(-1)
+                    feature_cell_type_indices.append(_FEATURE_NOT_PRESENT)
                 cell_type_idx = len(self._cell_types) - 1
             else:
                 cell_type_idx = self._cell_types.index(cell_type)
@@ -120,7 +122,7 @@ class EncodeDataset(torch.utils.data.Dataset):
             feature_idx = target_features.index(feature_name)
             cell_type_indices_by_feature_index[feature_idx][
                 cell_type_idx
-            ] = feature_index
+            ] = distinct_feature_index
         self._feature_indices_by_cell_type_index = np.array(
             cell_type_indices_by_feature_index
         ).transpose()
@@ -203,7 +205,7 @@ class EncodeDataset(torch.utils.data.Dataset):
 
         target_idx = self._feature_indices_by_cell_type_index[cell_type_idx]
         target = targets[target_idx]
-        target_mask = target_idx != -1
+        target_mask = target_idx != _FEATURE_NOT_PRESENT
 
         cell_type = np.zeros(self.n_cell_types)
         cell_type[cell_type_idx] = 1
@@ -233,18 +235,24 @@ class EncodeDataset(torch.utils.data.Dataset):
             # logger.info(
             print(
                 'Full sequence centered at region "{0}" position '
-                "{1} could not be retrieved. Sampling again.".format(chrom, position)
+                "{1} could not be retrieved.".format(chrom, position)
             )
             return False
         elif np.sum(sequence) / float(sequence.shape[0]) < 0.60:
             # logger.info(
             print(
                 "Over 30% of the bases in the sequence centered "
-                "at region \"{0}\" position {1} are ambiguous ('N'). "
-                "Sampling again.".format(chrom, position)
+                "at region \"{0}\" position {1} are ambiguous ('N'). ".format(
+                    chrom, position
+                )
             )
             return False
         elif sequence.shape[0] != self.sequence_length:
+            print(
+                f"Sequence retrieved at {chrom} position {position}\
+                length {sequence.shape[0]} does not match \
+                specified sequence length {self.sequence_length}"
+            )
             return False
         return True
 
@@ -263,7 +271,7 @@ class LargeRandomSampler(torch.utils.data.RandomSampler):
     ----------
     reference_sequence_path : str
         Path to reference sequence `fasta` file from which to create examples.
-    data_source : Dataset
+    data_source : torch.utils.data.Dataset
         Dataset to sample from.
     replacement : bool
         Samples are drawn on-demand with replacement if ``True``,
@@ -271,7 +279,7 @@ class LargeRandomSampler(torch.utils.data.RandomSampler):
     num_samples : int
         Number of samples to draw, default=`len(dataset)`. This argument
         is supposed to be specified only when `replacement` is ``True``.
-    generator : Generator
+    generator : torch.Generator
         Generator used in sampling.
     chunk_size : int
         Size of chunks that dataset is divided into for shuffling.
