@@ -4,8 +4,7 @@ import tempfile
 
 def gaps_from_fasta(fasta_path, gaps_path):
     """
-    Find gaps in fasta file from `fasta_path`
-    and write them to `gaps_path`
+    Find gaps in fasta file from `fasta_path` and write them to `gaps_path`
     """
     cur_chr = None
     cur_N_start = None
@@ -143,8 +142,7 @@ def full_target_file_pipeline(
     gaps_path = os.path.join(bed_files_path, "gaps.bed")
     gaps_from_fasta(fasta_path, gaps_path)
 
-    # elongate gaps to avoid using
-    # any unknown sites in the dataset
+    # elongate gaps to avoid using any unknown sites in the dataset
     long_gaps_path = os.path.join(bed_files_path, "long_gaps.bed")
     elongate_intervals(gaps_path, long_gaps_path, padding=500)
 

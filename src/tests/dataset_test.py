@@ -32,7 +32,7 @@ class TestEncodeDataset:
             distinct_features=distinct_features,
             target_features=["DNase"],
             intervals=intervals,
-            transforms=None,
+            transform=None,
             sequence_length=100,
             center_bin_to_predict=20,
             feature_thresholds=0.5,

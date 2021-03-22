@@ -2,6 +2,9 @@ import json
 
 from utils import full_target_file_pipeline
 
+FASTA_PATH = ("/mnt/datasets/DeepCT/male.hg19.fasta",)
+ALL_TARGETS_PATH = "/mnt/datasets/DeepCT/all_features/sorted_deepsea_data.bed"
+
 
 def create_mini_fasta(fasta_path, mini_fasta_path, mini_fasta_counts_path):
     """
@@ -95,6 +98,6 @@ def create_test_data(
 
 if __name__ == "__main__":
     create_test_data(
-        fasta_path="/mnt/datasets/DeepCT/male.hg19.fasta",
-        all_targets_path="/mnt/datasets/DeepCT/all_features/sorted_deepsea_data.bed",
+        fasta_path=FASTA_PATH,
+        all_targets_path=ALL_TARGETS_PATH,
     )
