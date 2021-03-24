@@ -23,8 +23,8 @@ class TestEncodeDataset:
         with open(distinct_features_path) as f:
             distinct_features = list(map(lambda x: x.rstrip(), f.readlines()))
 
-        # initialize the dataset
-        TestEncodeDataset.dataset = EncodeDataset(
+        # initialize the cell-wise dataset
+        dataset = EncodeDataset(
             reference_sequence_path=os.path.join(
                 self.test_data_path, "mini_male.hg19.fasta"
             ),
@@ -32,6 +32,24 @@ class TestEncodeDataset:
             distinct_features=distinct_features,
             target_features=["DNase"],
             intervals=intervals,
+            cell_wise=True,
+            transform=None,
+            sequence_length=100,
+            center_bin_to_predict=20,
+            feature_thresholds=0.5,
+            strand="+",
+        )
+
+        # initialize the dataset without cell types
+        dataset = EncodeDataset(
+            reference_sequence_path=os.path.join(
+                self.test_data_path, "mini_male.hg19.fasta"
+            ),
+            target_path=os.path.join(self.test_data_path, "mini_sorted_data.bed.gz"),
+            distinct_features=distinct_features,
+            target_features=["DNase"],
+            intervals=intervals,
+            cell_wise=False,
             transform=None,
             sequence_length=100,
             center_bin_to_predict=20,
