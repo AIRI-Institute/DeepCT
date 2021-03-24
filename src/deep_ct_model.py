@@ -4,6 +4,7 @@ DeepCT architecture (TODO: Add our names).
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.tensorboard import SummaryWriter
 
 
 class DeepCT(nn.Module):
@@ -86,6 +87,14 @@ class DeepCT(nn.Module):
             nn.Linear(final_embedding_length, n_genomic_features),
             nn.Sigmoid(),
         )
+
+    def log_cell_type_embeddings_to_tensorboard(self, cell_type_labels, output_dir):
+        writer = SummaryWriter(output_dir)
+        writer.add_embedding(
+            self.cell_type_net[0].weight.transpose(0, 1), cell_type_labels
+        )
+        writer.flush()
+        writer.close()
 
     def forward(self, x):
         """Forward propagation of a batch.
