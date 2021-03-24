@@ -10,7 +10,9 @@ _FEATURE_NOT_PRESENT = -1
 
 class EncodeDataset(torch.utils.data.Dataset):
     """
-    Dataset of `(sequence, cell_type, feature_values, feature_mask)`
+    Dataset of ENCODE epigenetic features of either
+    `(sequence, cell_type, feature_values, feature_mask)`
+    or `(sequence, feature_cell_values)`
 
     Parameters
     ----------
@@ -20,13 +22,17 @@ class EncodeDataset(torch.utils.data.Dataset):
         Path to tabix-indexed, compressed BED file (`*.bed.gz`) of genomic
         coordinates mapped to the genomic features we want to predict.
     distinct_features : list(str)
-        List of distinct cell_type|feature_name|info combinations available,
+        List of distinct `cell_type|feature_name|info` combinations available,
         e.g. `["K562|ZBTB33|None", "HCF|DNase|None", "HUVEC|DNase|None"]`.
     target_features: list(str)
         List of names of features we aim to predict, e.g. ["CTCF", "DNase"].
     intervals : list(tuple)
         Intervals to sample from in the format `(chrom, start, end)`,
         e.g. [("chr1", 550, 590), ("chr2", 6100, 6315)].
+    cell_wise: bool
+        Whether the dataset is supposed to return samples cell-wise,
+        i.e. whether samples are `(sequence, cell_type, feature_values, feature_mask)`
+        or `(sequence, feature_cell_values)`
     transform: callable, optional
         A callback function that takes `sequence, cell_type,
         feature_values, feature_mask` as arguments and returns
@@ -48,6 +54,8 @@ class EncodeDataset(torch.utils.data.Dataset):
         The reference sequence that examples are created from.
     target : selene_sdk.targets.Target
         The `selene_sdk.targets.Target` object holding the features.
+    cell_wise : bool
+        Whether each sample is cell type specific or not
     intervals : list(int)
         A list of intervals that we can draw samples from.
     intervals_length_sums : list(int)
