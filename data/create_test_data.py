@@ -2,7 +2,7 @@ import json
 
 from utils import full_target_file_pipeline
 
-FASTA_PATH = ("/mnt/datasets/DeepCT/male.hg19.fasta",)
+FASTA_PATH = "/mnt/datasets/DeepCT/male.hg19.fasta"
 ALL_TARGETS_PATH = "/mnt/datasets/DeepCT/all_features/sorted_deepsea_data.bed"
 
 
@@ -70,7 +70,7 @@ def create_test_data(
     mini_fasta_path="test_data/mini_male.hg19.fasta",
     mini_fasta_counts_path="test_data/mini_male.hg19.json",
     mini_targets_path="test_data/mini_all_sorted_data.bed",
-    encode_blacklist_path="long_hg19_blacklist_ENCFF001TDO.bed",
+    encode_blacklist_path="hg19_blacklist_ENCFF001TDO.bed",
     target_path="test_data/mini_sorted_data.bed",
     target_sampling_intervals_path="test_data/target_intervals.bed",
     distinct_features_path="test_data/distinct_features.txt",
@@ -92,7 +92,8 @@ def create_test_data(
         target_path,
         target_sampling_intervals_path,
         distinct_features_path,
-        elongate_encode_blacklist=False,
+        elongate_encode_blacklist=True,
+        interval_padding=50,
     )
 
 
