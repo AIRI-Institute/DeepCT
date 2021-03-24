@@ -32,7 +32,7 @@ evaluate_model: !obj:selene_sdk.EvaluateModel {
     },
     n_test_samples: 9000,
     trained_model_path: /home/arlapin/DeepCT/DeepCT_outputs/DDS_trained_on_DNase/best_model.pth.tar,
-    batch_size: 1,
+    batch_size: 1024,
     report_gt_feature_n_positives: 0,
     use_cuda: True,
     data_parallel: True,
