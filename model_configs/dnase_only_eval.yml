@@ -30,7 +30,7 @@ sampler: !obj:src.samplers.dnase_only_evaluation_sampler.DNaseOnlyEvaluationSamp
     center_bin_to_predict: 200,
     feature_thresholds: 0.5,
 }
-evaluate_model: !obj:selene_sdk.EvaluateModel {
+evaluate_model: !obj:src.evaluation.evaluate_model.EvaluateModel {
     features:  !obj:selene_sdk.utils.load_features_list {
         input_path: /mnt/datasets/DeepCT/dnase_features/distinct_features.txt,
     },
@@ -42,7 +42,6 @@ evaluate_model: !obj:selene_sdk.EvaluateModel {
     report_gt_feature_n_positives: 0,
     use_cuda: True,
     data_parallel: True,
-    output_dir: DeepCT_outputs/DeepCT_evaluation/,
     metrics: {
         accuracy: !import src.metrics.accuracy_score,
         average_precision: !import sklearn.metrics.average_precision_score,
