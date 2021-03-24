@@ -76,6 +76,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         distinct_features,
         target_features,
         intervals,
+        cell_wise=True,
         transform=None,
         sequence_length=1000,
         center_bin_to_predict=200,
@@ -87,6 +88,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.target = GenomicFeatures(
             target_path, distinct_features, feature_thresholds=feature_thresholds
         )
+        self.cell_wise = cell_wise
         self.transform = transform
 
         self.sequence_length = sequence_length
@@ -100,33 +102,37 @@ class EncodeDataset(torch.utils.data.Dataset):
             self.sequence_length - self.center_bin_to_predict
         ) // 2
 
-        self._cell_types = []
-        cell_type_indices_by_feature_index = [[] for i in range(len(target_features))]
-        for distinct_feature_index, distinct_feature in enumerate(distinct_features):
-            feature_description = distinct_feature.split("|")
-            feature_name = feature_description[1]
-            if feature_name not in target_features:
-                continue
-            cell_type = feature_description[0]
-            addon = feature_description[2]
-            if addon != "None":
-                cell_type = cell_type + "_" + addon
-            if cell_type not in self._cell_types:
-                self._cell_types.append(cell_type)
-                for feature_cell_type_indices in cell_type_indices_by_feature_index:
-                    feature_cell_type_indices.append(_FEATURE_NOT_PRESENT)
-                cell_type_idx = len(self._cell_types) - 1
-            else:
-                cell_type_idx = self._cell_types.index(cell_type)
+        if self.cell_wise:
+            self._cell_types = []
+            cell_type_indices_by_feature_index = [
+                [] for i in range(len(target_features))
+            ]
+            for distinct_feature_index, distinct_feature in enumerate(
+                distinct_features
+            ):
+                feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
+                if feature_name not in target_features:
+                    continue
+                if cell_type not in self._cell_types:
+                    self._cell_types.append(cell_type)
 
-            feature_idx = target_features.index(feature_name)
-            cell_type_indices_by_feature_index[feature_idx][
-                cell_type_idx
-            ] = distinct_feature_index
-        self._feature_indices_by_cell_type_index = np.array(
-            cell_type_indices_by_feature_index
-        ).transpose()
-        self.n_cell_types = len(self._cell_types)
+            self.n_cell_types = len(self._cell_types)
+            self.n_target_features = len(target_features)
+            self._feature_indices_by_cell_type_index = np.full(
+                (self.n_cell_types, self.n_target_features), _FEATURE_NOT_PRESENT
+            )
+
+            for distinct_feature_index, distinct_feature in enumerate(
+                distinct_features
+            ):
+                feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
+                if feature_name not in target_features:
+                    continue
+                feature_index = target_features.index(feature_name)
+                cell_type_index = self._cell_types.index(cell_type)
+                self._feature_indices_by_cell_type_index[cell_type_index][
+                    feature_index
+                ] = distinct_feature_index
 
         self.intervals = intervals
         self.intervals_length_sums = [0]
@@ -137,6 +143,8 @@ class EncodeDataset(torch.utils.data.Dataset):
             )
 
     def __len__(self):
+        if not self.cell_wise:
+            return self.intervals_length_sums[-1]
         return self.n_cell_types * self.intervals_length_sums[-1]
 
     def __getitem__(self, idx):
@@ -144,7 +152,11 @@ class EncodeDataset(torch.utils.data.Dataset):
         retrieved_sample = self._retrieve(chrom, pos, cell_type_idx)
         if self.transform:
             retrieved_sample = self.transform(*retrieved_sample)
-        return retrieved_sample
+        if self.cell_wise:
+            return retrieved_sample
+        retrieved_seq = retrieved_sample[0]
+        retrieved_target = retrieved_sample[2]
+        return retrieved_seq, retrieved_target
 
     def _get_chrom_pos_cell_by_idx(self, idx):
         """
@@ -162,8 +174,12 @@ class EncodeDataset(torch.utils.data.Dataset):
         tuple(str, int, int)
             Chromosome identifier, position in the chromosome, cell type
         """
-        cell_type_idx = idx % self.n_cell_types
-        position_idx = idx // self.n_cell_types
+        if self.cell_wise:
+            cell_type_idx = idx % self.n_cell_types
+            position_idx = idx // self.n_cell_types
+        else:
+            cell_type_idx = 0
+            position_idx = idx
         interval_idx = bisect.bisect(self.intervals_length_sums, position_idx) - 1
         interval_pos = position_idx - self.intervals_length_sums[interval_idx]
         chrom, pos_start, _ = self.intervals[interval_idx]
@@ -203,12 +219,16 @@ class EncodeDataset(torch.utils.data.Dataset):
         bin_end = position + self._end_radius
         targets = self.target.get_feature_data(chrom, bin_start, bin_end)
 
-        target_idx = self._feature_indices_by_cell_type_index[cell_type_idx]
-        target = targets[target_idx]
-        target_mask = target_idx != _FEATURE_NOT_PRESENT
-
-        cell_type = np.zeros(self.n_cell_types)
-        cell_type[cell_type_idx] = 1
+        if self.cell_wise:
+            target_idx = self._feature_indices_by_cell_type_index[cell_type_idx]
+            target = targets[target_idx]
+            target_mask = target_idx != _FEATURE_NOT_PRESENT
+            cell_type = np.zeros(self.n_cell_types)
+            cell_type[cell_type_idx] = 1
+        else:
+            target = targets
+            target_mask = np.ones(len(target))
+            cell_type = None
 
         window_start = bin_start - self._surrounding_sequence_radius
         window_end = bin_end + self._surrounding_sequence_radius
@@ -258,6 +278,19 @@ class EncodeDataset(torch.utils.data.Dataset):
 
     def _construct_ref_genome(self):
         return Genome(self.reference_sequence_path)
+
+    def _parse_distinct_feature(self, distinct_feature):
+        """
+        Parse a combination of `cell_type|feature_name|info` into
+        `(feature_name, cell_type)`
+        """
+        feature_description = distinct_feature.split("|")
+        feature_name = feature_description[1]
+        cell_type = feature_description[0]
+        addon = feature_description[2]
+        if addon != "None":
+            cell_type = cell_type + "_" + addon
+        return feature_name, cell_type
 
 
 class LargeRandomSampler(torch.utils.data.RandomSampler):
