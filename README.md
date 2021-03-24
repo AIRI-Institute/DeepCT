@@ -21,5 +21,20 @@ $PYTHONPATH=$PYTHONPATH:/home/$USER/selene
 5. Run DeepCT on selected GPU:
 ```zsh
 cd ~/DeepCT
-CUDA_VISIBLE_DEVICES=0 python -u ~/selene/selene_sdk/cli.py model_configs/single_cell_type.yml
+CUDA_VISIBLE_DEVICES=0 python -u ~/selene/selene_sdk/cli.py model_configs/dnase_only_train.yml
+```
+
+
+## How to evaluate:
+
+### DeeperDeepSEA (trained on DNase-only)
+```zsh
+CUDA_VISIBLE_DEVICES=0,1,2,3 python -u ~/selene/selene_sdk/cli.py model_configs/deeper_deep_sea_benchmark.yml
+```
+
+### DeepCT (trained on DNase-only)
+1. Update [model_configs/dnase_only_eval.yml](model_configs/dnase_only_eval.yml) with model's path and config;
+2. Run
+```zsh
+CUDA_VISIBLE_DEVICES=0,1,2,3 python -u ~/selene/selene_sdk/cli.py model_configs/dnase_only_eval.yml
 ```
