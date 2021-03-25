@@ -62,8 +62,8 @@ class DNaseOnlyEvaluationSampler(IntervalsSampler):
             batch_size % n_cell_types == 0
         ), "Batch size should be a multiple of n_cell_types"
 
-        one_deeper_deep_sea_sample = super().sample(batch_size // n_cell_types)
-        sequence_batch = one_deeper_deep_sea_sample.inputs()
+        deeper_deep_sea_samples = super().sample(batch_size // n_cell_types)
+        sequence_batch = deeper_deep_sea_samples.inputs()
 
         # Repeat each sequence n_cell_types times; its shape becomes
         # (batch_size, sequence_length, 4).
@@ -75,7 +75,7 @@ class DNaseOnlyEvaluationSampler(IntervalsSampler):
         )
         # Target's shape is (batch_size // n_cell_types, n_cell_types).
         # NOTE: This should be taken into account on evaluation step.
-        targets = one_deeper_deep_sea_sample.targets()
+        targets = deeper_deep_sea_samples.targets()
 
         return SamplesBatch(
             sequences,
