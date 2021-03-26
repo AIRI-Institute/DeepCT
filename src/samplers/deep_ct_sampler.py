@@ -424,10 +424,7 @@ class IntervalsSampler(OnlineSampler):
         )
 
         if self.mode in self._save_datasets:
-            # TODO(arlapin): Might need to change something here, if this is used.
-            feature_indices = ";".join(
-                [str(f) for f in np.nonzero(targets[retrieved_target_indices])[0]]
-            )
+            feature_indices = ";".join([str(f) for f in np.nonzero(targets)[0]])
             self._save_datasets[self.mode].append(
                 [chrom, window_start, window_end, strand, feature_indices]
             )
