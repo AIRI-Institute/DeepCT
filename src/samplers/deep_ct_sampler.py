@@ -217,6 +217,27 @@ class IntervalsSampler(OnlineSampler):
 
         self.sample_negative = sample_negative
 
+        from tqdm import trange
+
+        self.mode = "train"
+        for _ in trange(16 * 10**6, desc=self.mode):
+            self.sample()
+
+        self.save_dataset_to_file(self.mode, close_filehandle=True)
+        exit(0)
+
+        self.mode = "validate"
+        for _ in trange(10**5, desc=self.mode):
+            self.sample()
+        self.save_dataset_to_file(self.mode, close_filehandle=True)
+
+        self.mode = "test"
+        for _ in trange(10**5, desc=self.mode):
+            self.sample()
+        self.save_dataset_to_file(self.mode, close_filehandle=True)
+
+        exit(0)
+
     def _partition_dataset_proportion(self, intervals_path):
         """
         When holdout sets are created by randomly sampling a proportion
@@ -419,10 +440,6 @@ class IntervalsSampler(OnlineSampler):
         if not self._check_retrieved_sequence(retrieved_seq, chrom, position):
             return None
 
-        retrieved_target_indices = self._retrieve_positive_and_some_zero_samples(
-            targets, max_to_draw
-        )
-
         if self.mode in self._save_datasets:
             feature_indices = ";".join([str(f) for f in np.nonzero(targets)[0]])
             self._save_datasets[self.mode].append(
@@ -431,14 +448,8 @@ class IntervalsSampler(OnlineSampler):
             if len(self._save_datasets[self.mode]) > 200000:
                 self.save_dataset_to_file(self.mode)
 
-        all_retrieved_inputs = []
-        for feature_index in retrieved_target_indices:
-            cell_type_index = self._cell_type_index_by_feature_index[feature_index]
-            cell_type_one_hot_encoding = np.zeros(self._n_cell_types)
-            cell_type_one_hot_encoding[cell_type_index] = 1.0
-            all_retrieved_inputs.append((retrieved_seq, cell_type_one_hot_encoding))
+        return 1
 
-        return (all_retrieved_inputs, targets[retrieved_target_indices])
 
     def _update_randcache(self, mode=None):
         """
@@ -491,10 +502,6 @@ class IntervalsSampler(OnlineSampler):
             The shape of `targets` will be :math:`B \\times 1`,
 
         """
-        sequence_batch = np.zeros((batch_size, self.sequence_length, 4))
-        cell_types_batch = np.zeros((batch_size, self._n_cell_types))
-        targets_batch = np.zeros((batch_size, 1))
-
         n_samples_drawn = 0
         while n_samples_drawn < batch_size:
             sample_index = self._randcache[self.mode]["sample_next"]
@@ -518,16 +525,4 @@ class IntervalsSampler(OnlineSampler):
             )
             if not retrieve_output:
                 continue
-            inputs, targets = retrieve_output
-
-            for (sequence, cell_type), target in zip(inputs, targets):
-                sequence_batch[n_samples_drawn, :, :] = sequence
-                cell_types_batch[n_samples_drawn, :] = cell_type
-                targets_batch[n_samples_drawn, :] = target
-                n_samples_drawn += 1
-
-        return SamplesBatch(
-            sequence_batch,
-            other_input_batches={"cell_type_batch": cell_types_batch},
-            target_batch=targets_batch,
-        )
+            n_samples_drawn += 1
