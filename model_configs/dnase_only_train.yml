@@ -45,7 +45,8 @@ sampler: !obj:selene_sdk.samplers.MultiFileSampler {
 }
 train_model: !obj:src.train.train_dnase_only.TrainModel {
     batch_size: 8,
-    max_steps: 960000,
+    validate_batch_size: 100,
+    max_steps: 1000000,
     report_stats_every_n_steps: 5000,
     report_gt_feature_n_positives: 0,
     n_validation_samples: 16000,
