@@ -74,13 +74,15 @@ class TrainModel(object):
         The dictionary of keyword arguments to pass to the optimizer's
         constructor.
     batch_size : int
-        Specify the batch size to process examples. Should be a power of 2.
+        Specify the batch size to process examples.
+    validate_batch_size : int
+        Specify the batch size to process validation examples.
     max_steps : int
         The maximum number of mini-batches to iterate over.
     report_stats_every_n_steps : int
         The frequency with which to report summary statistics. You can
         set this value to be equivalent to a training epoch
-        (`n_steps * batch_size`) being the total number of samples
+        (`n_steps * _batch_size`) being the total number of samples
         seen by the model so far. Selene evaluates the model on the validation
         dataset every `report_stats_every_n_steps` and, if the model obtains
         the best performance so far (based on the user-specified loss function),
@@ -155,8 +157,6 @@ class TrainModel(object):
         The loss function to optimize.
     optimizer_class : torch.optim.Optimizer
         The optimizer to minimize loss with.
-    batch_size : int
-        The size of the mini-batch to use during training.
     max_steps : int
         The maximum number of mini-batches to iterate over.
     nth_step_report_stats : int
@@ -187,6 +187,7 @@ class TrainModel(object):
         optimizer_class,
         optimizer_kwargs,
         batch_size,
+        validate_batch_size,
         max_steps,
         report_stats_every_n_steps,
         output_dir,
@@ -210,7 +211,8 @@ class TrainModel(object):
         self.criterion = loss_criterion
         self.optimizer = optimizer_class(self.model.parameters(), **optimizer_kwargs)
 
-        self.batch_size = batch_size
+        self._batch_size = batch_size
+        self._validate_batch_size = validate_batch_size
         self.max_steps = max_steps
         self.nth_step_report_stats = report_stats_every_n_steps
         self.nth_step_save_checkpoint = None
@@ -225,7 +227,7 @@ class TrainModel(object):
             "Training parameters set: batch size {0}, "
             "number of steps per 'epoch': {1}, "
             "maximum number of steps: {2}".format(
-                self.batch_size, self.nth_step_report_stats, self.max_steps
+                self._batch_size, self.nth_step_report_stats, self.max_steps
             )
         )
 
@@ -337,7 +339,9 @@ class TrainModel(object):
         (
             self._validation_data,
             self._all_validation_targets,
-        ) = self.sampler.get_validation_set(self.batch_size, n_samples=n_samples)
+        ) = self.sampler.get_validation_set(
+            self._validate_batch_size, n_samples=n_samples
+        )
         t_f = time()
         logger.info(
             (
@@ -345,7 +349,7 @@ class TrainModel(object):
                 "batches) to evaluate after each training step."
             ).format(
                 t_f - t_i,
-                len(self._validation_data) * self.batch_size,
+                len(self._validation_data) * self._validate_batch_size,
                 len(self._validation_data),
             )
         )
@@ -362,7 +366,7 @@ class TrainModel(object):
         logger.info("Creating test dataset.")
         t_i = time()
         self._test_data, self._all_test_targets = self.sampler.get_test_set(
-            self.batch_size, n_samples=self._n_test_samples
+            self._validate_batch_size, n_samples=self._n_test_samples
         )
         t_f = time()
         logger.info(
@@ -370,12 +374,10 @@ class TrainModel(object):
                 "{0} s to load {1} test examples ({2} test batches) "
                 "to evaluate after all training steps."
             ).format(
-                t_f - t_i, len(self._test_data) * self.batch_size, len(self._test_data)
+                t_f - t_i,
+                len(self._test_data) * self._validate_batch_size,
+                len(self._test_data),
             )
-        )
-        np.savez_compressed(
-            os.path.join(self.output_dir, "test_targets.npz"),
-            data=self._all_test_targets,
         )
 
     def _get_batch(self):
@@ -389,11 +391,11 @@ class TrainModel(object):
 
         """
         t_i_sampling = time()
-        samples_batch = self.sampler.sample(batch_size=self.batch_size)
+        samples_batch = self.sampler.sample(batch_size=self._batch_size)
         t_f_sampling = time()
         logger.debug(
             ("[BATCH] Time to sample {0} examples: {1} s.").format(
-                self.batch_size, t_f_sampling - t_i_sampling
+                self._batch_size, t_f_sampling - t_i_sampling
             )
         )
         return samples_batch
