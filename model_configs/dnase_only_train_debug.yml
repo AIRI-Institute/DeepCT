@@ -43,7 +43,7 @@ sampler: !obj:selene_sdk.samplers.MultiFileSampler {
         input_path: /mnt/datasets/DeepCT/dnase_features/distinct_features.txt
     },
 }
-train_model: !obj:selene_sdk.TrainModel {
+train_model: !obj:src.train.train_dnase_only.TrainModel {
     batch_size: 2,
     max_steps: 50,
     report_stats_every_n_steps: 10,
