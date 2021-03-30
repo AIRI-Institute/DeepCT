@@ -87,16 +87,36 @@ class DeepCT(nn.Module):
             ),
             nn.ReLU(inplace=True),
             nn.BatchNorm1d(final_embedding_length),
+            nn.Linear(final_embedding_length, final_embedding_length),
+            nn.ReLU(inplace=True),
+            nn.Linear(final_embedding_length, final_embedding_length),
+            nn.ReLU(inplace=True),
+            nn.Linear(final_embedding_length, final_embedding_length),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm1d(final_embedding_length),
+            nn.Linear(final_embedding_length, final_embedding_length),
+            nn.ReLU(inplace=True),
+            nn.Linear(final_embedding_length, final_embedding_length),
+            nn.ReLU(inplace=True),
+            nn.Linear(final_embedding_length, final_embedding_length),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm1d(final_embedding_length),
             nn.Linear(final_embedding_length, n_genomic_features),
             nn.Sigmoid(),
         )
 
     def log_cell_type_embeddings_to_tensorboard(self, cell_type_labels, output_dir):
+        metadata = [t.split(",") for t in cell_type_labels]
+        metadata_header = ["label"]
+        for i in range(1, len(metadata[0])):
+            metadata_header.append("class{}".format(i))
+
         writer = SummaryWriter(output_dir)
         writer.add_embedding(
-            self.cell_type_net[0].weight.transpose(0, 1), cell_type_labels
+            self.cell_type_net[0].weight.transpose(0, 1),
+            metadata=metadata,
+            metadata_header=metadata_header,
         )
-        writer.flush()
         writer.close()
 
     def forward(self, x):

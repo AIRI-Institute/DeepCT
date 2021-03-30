@@ -44,13 +44,13 @@ sampler: !obj:selene_sdk.samplers.MultiFileSampler {
     },
 }
 train_model: !obj:src.train.train_dnase_only.TrainModel {
-    batch_size: 8,
-    validate_batch_size: 100,
+    batch_size: 64,
+    validate_batch_size: 200,
     max_steps: 1000000,
-    report_stats_every_n_steps: 5000,
+    report_stats_every_n_steps: 2000,
     report_gt_feature_n_positives: 0,
-    n_validation_samples: 16000,
-    n_test_samples: 640000,
+    n_validation_samples: 10000,
+    n_test_samples: 100000,
     use_cuda: True,
     data_parallel: True,
     logging_verbosity: 2,

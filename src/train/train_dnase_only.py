@@ -22,7 +22,12 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from torch.autograd import Variable
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import (
+    CosineAnnealingLR,
+    CyclicLR,
+    OneCycleLR,
+    ReduceLROnPlateau,
+)
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
@@ -406,9 +411,7 @@ class TrainModel(object):
 
         """
         min_loss = self._min_loss
-        scheduler = ReduceLROnPlateau(
-            self.optimizer, "min", patience=16, verbose=True, factor=0.8
-        )
+        self._scheduler = CosineAnnealingLR(self.optimizer, self.max_steps)
 
         time_per_step = []
         train_losses = []
@@ -416,7 +419,7 @@ class TrainModel(object):
         train_targets = []
         for step in tqdm(range(self._start_step, self.max_steps)):
             t_i = time()
-            prediction, target, loss = self.train()
+            prediction, target, loss = self.train(step)
             t_f = time()
             train_losses.append(loss)
             train_predictions.append(prediction)
@@ -447,9 +450,6 @@ class TrainModel(object):
 
                 validation_loss = self._validate_and_log_metrics(step)
 
-                scheduler.step(math.ceil(validation_loss * 1000.0) / 1000.0)
-                self._log_lr(step)
-
                 if validation_loss < min_loss:
                     min_loss = validation_loss
                     self._save_checkpoint(step, min_loss, is_best=True)
@@ -458,7 +458,7 @@ class TrainModel(object):
         self.sampler.save_dataset_to_file("train", close_filehandle=True)
         self._writer.flush()
 
-    def train(self):
+    def train(self, step):
         """
         Trains the model on a batch of data.
 
@@ -479,6 +479,8 @@ class TrainModel(object):
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        self._scheduler.step()
+        self._log_lr(step)
 
         return (
             predictions.cpu().detach().numpy(),
