@@ -58,6 +58,10 @@ class EvaluateModel(object):
     data_parallel : bool, optional
         Default is `False`. Specify whether multiple GPUs are available
         for torch to use during training.
+    log_cell_type_embeddings_to_tensorboard : bool, optional
+        Default is `True`. Wether to publish cell type embeddings to tensorboard.
+        NOTE: If True, a model should have `log_cell_type_embeddings_to_tensorboard`
+        method.
 
     Attributes
     ----------
@@ -86,6 +90,7 @@ class EvaluateModel(object):
         report_gt_feature_n_positives=10,
         use_cuda=False,
         data_parallel=False,
+        log_cell_type_embeddings_to_tensorboard=True,
         metrics=dict(roc_auc=roc_auc_score, average_precision=average_precision_score),
     ):
         self.n_test_samples = n_test_samples
@@ -114,9 +119,11 @@ class EvaluateModel(object):
             self.model = load_model_from_state_dict(trained_model["state_dict"], model)
         else:
             self.model = load_model_from_state_dict(trained_model, model)
-        self.model.model.log_cell_type_embeddings_to_tensorboard(
-            self.features, self.output_dir
-        )
+
+        if log_cell_type_embeddings_to_tensorboard:
+            self.model.model.log_cell_type_embeddings_to_tensorboard(
+                self.features, self.output_dir
+            )
 
         self.model.eval()
         if data_parallel:
