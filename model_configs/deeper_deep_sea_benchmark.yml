@@ -9,34 +9,25 @@ model: {
     },
     non_strand_specific: mean
 }
-sampler: !obj:selene_sdk.samplers.IntervalsSampler {
+sampler: !obj:src.samplers.dnase_file_sampler.DNaseFileSampler {
+    filepath: /mnt/datasets/DeepCT/dnase_features/test_data.bed,
     reference_sequence: !obj:selene_sdk.sequences.Genome {
         input_path: /mnt/datasets/DeepCT/male.hg19.fasta,
         blacklist_regions: hg19
     },
-    features: !obj:selene_sdk.utils.load_features_list {
-        input_path: /mnt/datasets/DeepCT/dnase_features/distinct_features.txt
-    },
-    target_path: /mnt/datasets/DeepCT/dnase_features/sorted_deepsea_data.bed.gz,
-    intervals_path: /mnt/datasets/DeepCT/dnase_features/TF_intervals.txt,
-    test_holdout: [chr8, chr9],
-    validation_holdout: [chr6, chr7],
-    seed: 127,
-    sequence_length: 1000,
-    center_bin_to_predict: 200,
-    feature_thresholds: 0.5,
+    n_cell_types: 125,
 }
-evaluate_model: !obj:selene_sdk.EvaluateModel {
+evaluate_model: !obj:src.evaluation.evaluate_model.EvaluateModel {
     features:  !obj:selene_sdk.utils.load_features_list {
         input_path: /mnt/datasets/DeepCT/dnase_features/distinct_features.txt,
     },
-    n_test_samples: 9000,
+    n_test_samples: 64000,
     trained_model_path: /home/arlapin/DeepCT/DeepCT_outputs/DDS_trained_on_DNase/best_model.pth.tar,
-    batch_size: 1024,
+    batch_size: 1000,
     report_gt_feature_n_positives: 0,
     use_cuda: True,
     data_parallel: True,
-    output_dir: DeepCT_outputs/DDS_evaluation,
+    log_cell_type_embeddings_to_tensorboard: False,
     metrics: {
         accuracy: !import src.metrics.accuracy_score,
         average_precision: !import sklearn.metrics.average_precision_score,
