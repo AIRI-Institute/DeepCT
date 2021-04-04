@@ -64,8 +64,9 @@ class DNaseFileSampler(FileSampler):
             )
             sequences.append(sequence)
 
-            positive_targets = [int(t) for t in seq_targets.split(";")]
-            targets[index, positive_targets] = 1
+            if len(seq_targets.strip())!=0:
+                positive_targets = [int(t) for t in seq_targets.split(";")]
+                targets[index, positive_targets] = 1
 
         sequences = np.array(sequences)
         return SamplesBatch(sequences, target_batch=targets)
