@@ -64,11 +64,7 @@ class DNaseFileSampler(FileSampler):
             )
             sequences.append(sequence)
 
-<<<<<<< HEAD
             if len(seq_targets.strip())!=0:
-=======
-            if len(seq_targets.strip()==0):
->>>>>>> 46bf319... Sampler update handling zero positive targets case
                 positive_targets = [int(t) for t in seq_targets.split(";")]
                 targets[index, positive_targets] = 1
 
