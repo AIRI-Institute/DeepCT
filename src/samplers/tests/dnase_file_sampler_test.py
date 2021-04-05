@@ -6,7 +6,7 @@ from src.samplers.dnase_file_sampler import DNaseFileSampler
 
 TEST_REFERENCE_SEQUENCE_FILE = "data/test_data/mini_male.hg19.fasta"
 
-# Contains 10 intervals.
+# Contains 11 intervals
 TEST_BED_FILE = "data/test_data/samples_for_tests.bed"
 
 
@@ -46,3 +46,9 @@ class TestDNaseFileSampler:
             batch_size=2, n_samples=5
         )
         assert len(batches) == 3
+
+    def test_get_data_sample_wo_positive_cases(self):
+        batches, all_target = self.sampler.get_data_and_targets(
+            batch_size=11, n_samples=11
+        )
+        assert sum(all_target[9]) == 0
