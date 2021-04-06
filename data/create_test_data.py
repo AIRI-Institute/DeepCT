@@ -66,7 +66,7 @@ def create_mini_targets(
 def create_test_data(
     fasta_path,
     all_targets_path,
-    target_features=["DNase"],
+    target_features_path="test_data/target_features.txt",
     mini_fasta_path="test_data/mini_male.hg19.fasta",
     mini_fasta_counts_path="test_data/mini_male.hg19.json",
     mini_targets_path="test_data/mini_all_sorted_data.bed",
@@ -88,12 +88,13 @@ def create_test_data(
         mini_fasta_path,
         encode_blacklist_path,
         mini_targets_path,
-        target_features,
+        target_features_path,
         target_path,
         target_sampling_intervals_path,
         distinct_features_path,
-        elongate_encode_blacklist=True,
-        interval_padding=50,
+        elongate_encode_blacklist=False,
+        blacklist_padding=50,
+        target_padding=3,
     )
 
 
