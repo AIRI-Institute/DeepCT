@@ -8,6 +8,20 @@ from selene_sdk.targets import GenomicFeatures
 _FEATURE_NOT_PRESENT = -1
 
 
+class PermuteSequenceChannels:
+    """
+    Permute channels of retrieved encoded DNA sequence.
+
+    Permutes axes of `np.array` of shape `(sequence_length, alphabet_size)` to
+    obtain `np.array` of shape `(alphabet_size, sequence_length)`
+    """
+
+    def __call__(self, *sample):
+        seq = sample[0]
+        perm_seq = np.transpose(seq)
+        return (perm_seq, *sample[1:])
+
+
 class EncodeDataset(torch.utils.data.Dataset):
     """
     Dataset of ENCODE epigenetic features of either
@@ -85,7 +99,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         target_features,
         intervals,
         cell_wise=True,
-        transform=None,
+        transform=PermuteSequenceChannels(),
         sequence_length=1000,
         center_bin_to_predict=200,
         feature_thresholds=0.5,
@@ -93,9 +107,12 @@ class EncodeDataset(torch.utils.data.Dataset):
     ):
         self.reference_sequence_path = reference_sequence_path
         self.reference_sequence = self._construct_ref_genome()
-        self.target = GenomicFeatures(
-            target_path, distinct_features, feature_thresholds=feature_thresholds
-        )
+
+        self.distinct_features = distinct_features
+        self.target_path = target_path
+        self.feature_thresholds = feature_thresholds
+        self.target = self._construct_target()
+
         self.cell_wise = cell_wise
         self.transform = transform
 
@@ -116,7 +133,7 @@ class EncodeDataset(torch.utils.data.Dataset):
                 [] for i in range(len(target_features))
             ]
             for distinct_feature_index, distinct_feature in enumerate(
-                distinct_features
+                self.distinct_features
             ):
                 feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
                 if feature_name not in target_features:
@@ -131,7 +148,7 @@ class EncodeDataset(torch.utils.data.Dataset):
             )
 
             for distinct_feature_index, distinct_feature in enumerate(
-                distinct_features
+                self.distinct_features
             ):
                 feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
                 if feature_name not in target_features:
@@ -222,16 +239,14 @@ class EncodeDataset(torch.utils.data.Dataset):
             in the given dataset for a given cell type.
 
         """
-
         bin_start = position - self._start_radius
         bin_end = position + self._end_radius
         targets = self.target.get_feature_data(chrom, bin_start, bin_end)
-
         if self.cell_wise:
             target_idx = self._feature_indices_by_cell_type_index[cell_type_idx]
-            target = targets[target_idx]
+            target = targets[target_idx].astype(np.float32)
             target_mask = target_idx != _FEATURE_NOT_PRESENT
-            cell_type = np.zeros(self.n_cell_types)
+            cell_type = np.zeros(self.n_cell_types, dtype=np.float32)
             cell_type[cell_type_idx] = 1
         else:
             target = targets
@@ -287,6 +302,13 @@ class EncodeDataset(torch.utils.data.Dataset):
     def _construct_ref_genome(self):
         return Genome(self.reference_sequence_path)
 
+    def _construct_target(self):
+        return GenomicFeatures(
+            self.target_path,
+            self.distinct_features,
+            feature_thresholds=self.feature_thresholds,
+        )
+
     def _parse_distinct_feature(self, distinct_feature):
         """
         Parse a combination of `cell_type|feature_name|info` into
@@ -334,7 +356,12 @@ class LargeRandomSampler(torch.utils.data.RandomSampler):
         generator=None,
         chunk_size=10000000,
     ):
-        super().__init__(data_source, replacement, num_samples, generator)
+        super().__init__(
+            data_source,
+            replacement=replacement,
+            num_samples=num_samples,
+            generator=generator,
+        )
 
         self.chunk_size = chunk_size
         self.m_chunks = (len(self.data_source) - 1) // self.chunk_size + 1
@@ -390,3 +417,4 @@ def encode_worker_init_fn(worker_id):
     # which is not multiprocessing-safe, see:
     # https://github.com/mdshw5/pyfaidx/issues/167#issuecomment-667591513
     dataset.reference_sequence = dataset._construct_ref_genome()
+    dataset.target = dataset._construct_target()
