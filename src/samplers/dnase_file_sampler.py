@@ -64,7 +64,7 @@ class DNaseFileSampler(FileSampler):
             )
             sequences.append(sequence)
 
-            if len(seq_targets.strip())!=0:
+            if len(seq_targets.strip()) != 0:
                 positive_targets = [int(t) for t in seq_targets.split(";")]
                 targets[index, positive_targets] = 1
 
