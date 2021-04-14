@@ -5,7 +5,7 @@
 1. Clone and checkout upgraded `selene`:
 ```zsh
 cd ~
-git clone https://github.com/arlapin/selene.git
+git clone https://github.com/sberbank-ai-lab/selene.git
 cd selene
 git checkout arlapin/dev
 ```
