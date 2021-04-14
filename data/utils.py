@@ -25,7 +25,8 @@ def preprocess_fasta(fasta_path, gaps_path, chrom_ends_len=500, chrom_ends_path=
     """
     Find gaps in fasta file from `fasta_path` and write them to `gaps_path`.
     If `chrom_ends_len > 0`, write intervals of length `chrom_ends_len`
-    at the start and end of each chromosome to `chrom_ends_path`
+    at the start and end of each chromosome to `chrom_ends_path`.
+    Returns `chr_counts` -- a dict of chromosome lengths
     """
     cur_chr = None
     cur_N_start = None
