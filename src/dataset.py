@@ -249,8 +249,8 @@ class EncodeDataset(torch.utils.data.Dataset):
             cell_type = np.zeros(self.n_cell_types, dtype=np.float32)
             cell_type[cell_type_idx] = 1
         else:
-            target = targets
-            target_mask = np.ones(len(target))
+            target = targets.astype(np.float32)
+            target_mask = np.ones_like(target)
             cell_type = None
 
         window_start = bin_start - self._surrounding_sequence_radius
