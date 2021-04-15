@@ -1,0 +1,63 @@
+---
+ops: [train]
+lr: 0.0001
+model: {
+    path: src/deepct_model.py,
+    class: DeepCT,
+    class_args: {
+        sequence_length: 1000,
+        n_cell_types: 125,
+        sequence_embedding_length: 128,
+        cell_type_embedding_length: 32,
+        final_embedding_length: 256,
+        n_genomic_features: 1,
+    }
+}
+criterion: {
+    pos_weights_path: /mnt/datasets/DeepCT/dataset_data/dnase/feature_pos_weights.txt
+}
+dataset: {
+    path: src/dataset.py,
+    class: EncodeDataset,
+    sampler_class: LargeRandomSampler,
+
+    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/dnase/distinct_features.txt,
+    target_features_path: /mnt/datasets/DeepCT/dataset_data/dnase/target_features.txt,
+    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/dnase/target_intervals.bed,
+    test_holdout: [chr8, chr9],
+    validation_holdout: [chr6, chr7],
+    
+    dataset_args: {
+        reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
+        target_path: /mnt/datasets/DeepCT/dataset_data/dnase/sorted_data.bed.gz,
+        cell_wise: True,
+        sequence_length: 1000,
+        center_bin_to_predict: 200,
+        feature_thresholds: 0.5,
+    },
+    loader_args: {
+        batch_size: 128,
+        num_workers: 16,
+    }
+}
+train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
+    n_epochs: 100,
+    report_stats_every_n_steps: 2000,
+    save_checkpoint_every_n_steps: 2000,
+    report_gt_feature_n_positives: 10,
+    device: 'cuda:3',
+    data_parallel: False,
+    logging_verbosity: 2,
+    metrics: {
+        accuracy: !import src.metrics.accuracy_score,
+        average_precision: !import sklearn.metrics.average_precision_score,
+        f1: !import src.metrics.f1_score,
+        precision: !import src.metrics.precision_score,
+        recall: !import src.metrics.recall_score,
+        roc_auc: !import sklearn.metrics.roc_auc_score,
+    },
+}
+output_dir: DeepCT_outputs/encode/deepct_v2/dnase/LR_0001
+random_seed: 1447
+create_subdirectory: True
+...
