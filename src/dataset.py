@@ -104,6 +104,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         center_bin_to_predict=200,
         feature_thresholds=0.5,
         strand="+",
+        multi_ct_target=False,
     ):
         self.reference_sequence_path = reference_sequence_path
         self.reference_sequence = self._construct_ref_genome()
@@ -113,7 +114,10 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.feature_thresholds = feature_thresholds
         self.target = self._construct_target()
 
+        if not cell_wise and multi_ct_target:
+            raise ValueError("cell_wise=True must be used with multi_ct_target=True")
         self.cell_wise = cell_wise
+        self.multi_ct_target = multi_ct_target
         self.transform = transform
 
         self.sequence_length = sequence_length
@@ -127,7 +131,7 @@ class EncodeDataset(torch.utils.data.Dataset):
             self.sequence_length - self.center_bin_to_predict
         ) // 2
 
-        if self.cell_wise:
+        if self.cell_wise or self.multi_ct_target:
             self._cell_types = []
             cell_type_indices_by_feature_index = [
                 [] for i in range(len(target_features))
@@ -159,6 +163,11 @@ class EncodeDataset(torch.utils.data.Dataset):
                     feature_index
                 ] = distinct_feature_index
 
+            if self.multi_ct_target:
+                self.target_mask = (
+                    self._feature_indices_by_cell_type_index != _FEATURE_NOT_PRESENT
+                )
+
         self.intervals = intervals
         self.intervals_length_sums = [0]
         for chrom, pos_start, pos_end in self.intervals:
@@ -168,7 +177,7 @@ class EncodeDataset(torch.utils.data.Dataset):
             )
 
     def __len__(self):
-        if not self.cell_wise:
+        if not self.cell_wise or self.multi_ct_target:
             return self.intervals_length_sums[-1]
         return self.n_cell_types * self.intervals_length_sums[-1]
 
@@ -199,7 +208,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         tuple(str, int, int)
             Chromosome identifier, position in the chromosome, cell type
         """
-        if self.cell_wise:
+        if self.cell_wise and not self.multi_ct_target:
             cell_type_idx = idx % self.n_cell_types
             position_idx = idx // self.n_cell_types
         else:
@@ -243,11 +252,23 @@ class EncodeDataset(torch.utils.data.Dataset):
         bin_end = position + self._end_radius
         targets = self.target.get_feature_data(chrom, bin_start, bin_end)
         if self.cell_wise:
-            target_idx = self._feature_indices_by_cell_type_index[cell_type_idx]
-            target = targets[target_idx].astype(np.float32)
-            target_mask = target_idx != _FEATURE_NOT_PRESENT
-            cell_type = np.zeros(self.n_cell_types, dtype=np.float32)
-            cell_type[cell_type_idx] = 1
+            if self.multi_ct_target:
+                target = []
+                for cell_type_idx in range(self.n_cell_types):
+                    ct_target_idx = self._feature_indices_by_cell_type_index[
+                        cell_type_idx
+                    ]
+                    ct_target = targets[ct_target_idx].astype(np.float32)
+                    target.append(ct_target)
+                target = np.array(target).astype(np.float32)
+                target_mask = self.target_mask
+                cell_type = 0.0
+            else:
+                target_idx = self._feature_indices_by_cell_type_index[cell_type_idx]
+                target = targets[target_idx].astype(np.float32)
+                target_mask = target_idx != _FEATURE_NOT_PRESENT
+                cell_type = np.zeros(self.n_cell_types, dtype=np.float32)
+                cell_type[cell_type_idx] = 1
         else:
             target = targets.astype(np.float32)
             target_mask = np.ones_like(target)
