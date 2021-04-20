@@ -37,6 +37,14 @@ dataset: {
         batch_size: 128,
         num_workers: 16,
     },
+    train_transform: !obj:torchvision.transforms.Compose {
+        transforms: [
+            !obj:src.transforms.PermuteSequenceChannels {},
+            !obj:src.transforms.RandomReverseStrand {
+                p: 0.5,
+            }
+        ],
+    }
 }
 train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
     n_epochs: 100,

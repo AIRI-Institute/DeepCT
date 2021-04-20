@@ -5,21 +5,9 @@ import torch
 from selene_sdk.sequences import Genome
 from selene_sdk.targets import GenomicFeatures
 
+from src.transforms import PermuteSequenceChannels
+
 _FEATURE_NOT_PRESENT = -1
-
-
-class PermuteSequenceChannels:
-    """
-    Permute channels of retrieved encoded DNA sequence.
-
-    Permutes axes of `np.array` of shape `(sequence_length, alphabet_size)` to
-    obtain `np.array` of shape `(alphabet_size, sequence_length)`
-    """
-
-    def __call__(self, *sample):
-        seq = sample[0]
-        perm_seq = np.transpose(seq)
-        return (perm_seq, *sample[1:])
 
 
 class EncodeDataset(torch.utils.data.Dataset):
@@ -193,8 +181,8 @@ class EncodeDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         chrom, pos, cell_type_idx = self._get_chrom_pos_cell_by_idx(idx)
         retrieved_sample = self._retrieve(chrom, pos, cell_type_idx)
-        if self.transform:
-            retrieved_sample = self.transform(*retrieved_sample)
+        if self.transform is not None:
+            retrieved_sample = self.transform(retrieved_sample)
         if self.cell_wise:
             return retrieved_sample
         retrieved_seq = retrieved_sample[0]
