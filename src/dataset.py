@@ -61,6 +61,13 @@ class EncodeDataset(torch.utils.data.Dataset):
     feature_thresholds : float [0.0, 1.0] or None, optional
          Default is 0.5. The `feature_threshold` to pass to the
         `GenomicFeatures` object.
+    strand : str
+        Default is '+'. Strand to sample from.
+    multi_ct_target: bool, optional
+        Default is False. Make samples positional, like with cell_wise=False but
+        fetch targets as if cell_wise=True and for all cell types at once, i.e.
+        a sample would look like `(sequence, 0.0, target, target_mask)`,
+        where `target` and `target_mask` have shape `(n_cell_types, n_target_features)`.
 
     Attributes
     ----------
@@ -87,6 +94,8 @@ class EncodeDataset(torch.utils.data.Dataset):
         `sequence_length`.
     strand : str
         Strand to sample from.
+    multi_ct_target: bool, optional
+        Whether data is meant for multiple cell type model input or not.
     n_cell_types: int
         Total number of cell types present in the dataset.
     """
