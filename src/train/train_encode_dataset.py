@@ -93,6 +93,11 @@ class TrainEncodeDatasetModel(object):
         `output_dir`.
     output_dir : str
         The output directory to save model checkpoints and logs in.
+    scheduler_class: torch.optim.lr_scheduler, optional
+        The LR scheduler class to use with specified optimizer.
+    scheduler_kwargs: dict, optional
+        The dictionary of keyword arguments to pass to the LR scheduler's
+        constructor.
     save_checkpoint_every_n_steps : int or None, optional
         Default is 1000. If None, set to the same value as
         `report_stats_every_n_steps`
@@ -138,6 +143,8 @@ class TrainEncodeDatasetModel(object):
         The loss function to optimize.
     optimizer : torch.optim.Optimizer
         The optimizer to minimize loss with.
+    scheduler : torch.optim.lr_scheduler
+        The LR scheduler to use with optimizer.
     train_loader: torch.utils.data.DataLoader
         Training data loader.
     val_loader: torch.utils.data.DataLoader
@@ -177,6 +184,8 @@ class TrainEncodeDatasetModel(object):
         n_epochs,
         report_stats_every_n_steps,
         output_dir,
+        scheduler_class=None,
+        scheduler_kwargs=None,
         save_checkpoint_every_n_steps=1000,
         save_new_checkpoints_after_n_steps=None,
         report_gt_feature_n_positives=10,
@@ -196,6 +205,11 @@ class TrainEncodeDatasetModel(object):
         self.val_loader = val_loader
         self.criterion = loss_criterion
         self.optimizer = optimizer_class(self.model.parameters(), **optimizer_kwargs)
+
+        if scheduler_class is not None:
+            if scheduler_kwargs is None:
+                scheduler_kwargs = dict()
+            self.scheduler = scheduler_class(self.optimizer, **scheduler_kwargs)
 
         if train_loader.dataset.cell_wise:
             self.masked_targets = True
@@ -307,9 +321,6 @@ class TrainEncodeDatasetModel(object):
 
         """
         min_loss = self._min_loss
-        scheduler = ReduceLROnPlateau(
-            self.optimizer, "min", patience=16, verbose=True, factor=0.8
-        )
 
         time_per_batch = []
         report_train_losses = []
@@ -331,8 +342,9 @@ class TrainEncodeDatasetModel(object):
                 report_train_targets.append(target)
                 if self.masked_targets:
                     report_train_target_masks.append(target_mask)
-
                 total_steps += 1
+                self._update_and_log_lr_if_needed(total_steps)
+
                 if total_steps and total_steps % self.nth_step_report_stats == 0:
                     self._log_train_metrics_and_clean_cache(
                         epoch,
@@ -351,9 +363,9 @@ class TrainEncodeDatasetModel(object):
                         report_train_target_masks = []
 
                     validation_loss = self._validate_and_log_metrics(total_steps)
-
-                    scheduler.step(math.ceil(validation_loss * 1000.0) / 1000.0)
-                    self._log_lr(total_steps)
+                    self._update_and_log_lr_if_needed(
+                        total_steps, math.ceil(validation_loss * 1000.0) / 1000.0
+                    )
 
                     if validation_loss < min_loss:
                         min_loss = validation_loss
@@ -427,6 +439,21 @@ class TrainEncodeDatasetModel(object):
             target_mask,
             loss.item(),
         )
+
+    def _update_and_log_lr_if_needed(self, total_steps, validation_loss=None):
+        # torch.optim.lr_scheduler.ReduceLROnPlateau is the only scheduler
+        # that takes some value as input to `.step()`
+        if self.scheduler is not None:
+            if validation_loss is None and not isinstance(
+                self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
+            ):
+                self.scheduler.step()
+                self._log_lr(total_steps)
+            elif validation_loss is not None and isinstance(
+                self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
+            ):
+                self.scheduler.step(validation_loss)
+                self._log_lr(total_steps)
 
     def _log_train_metrics_and_clean_cache(
         self,
