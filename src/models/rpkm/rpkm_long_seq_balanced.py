@@ -70,28 +70,35 @@ class DeepCT(nn.Module):
         
         self._n_cell_types = n_cell_types
 
-        pool_kernel_size = 4      
+        #pool_kernel_size = 4      
         
         k_l = [5, 3, 3, 3, 3] # kernel sizes
         d_l = [1, 2, 2, 4, 2] # dilation sizes
         
+        p_l = [4, 4, 4, 4, 4] # pooling sizes
+        
         self.conv_net = nn.Sequential(
             ResidualBlock(4, 160, k = k_l[0], d = d_l[0]),
-            nn.AvgPool1d(kernel_size=pool_kernel_size, stride=pool_kernel_size),
+            nn.AvgPool1d(kernel_size=p_l[0], stride=p_l[0]),
+            
             ResidualBlock(160, 320, k = k_l[1], d = d_l[1]),
-            nn.AvgPool1d(kernel_size=pool_kernel_size, stride=pool_kernel_size),
+            nn.AvgPool1d(kernel_size=p_l[1], stride=p_l[1]),
+            
             ResidualBlock(320, 480, k = k_l[2], d = d_l[2]),
-            nn.AvgPool1d(kernel_size=pool_kernel_size, stride=pool_kernel_size),
+            nn.AvgPool1d(kernel_size=p_l[2], stride=p_l[2]),
+            
             ResidualBlock(480, 640, k = k_l[3], d = d_l[3]),
-            nn.AvgPool1d(kernel_size=pool_kernel_size, stride=pool_kernel_size),
+            nn.AvgPool1d(kernel_size=p_l[3], stride=p_l[3]),
+            
             ResidualBlock(640, 960, k = k_l[4], d = d_l[4]),
-            nn.AvgPool1d(kernel_size=pool_kernel_size, stride=pool_kernel_size),
+            nn.AvgPool1d(kernel_size=p_l[4], stride=p_l[4]),
         )
         
         
         length = sequence_length
         for i in range(len(k_l)):
-            length = self.calc_reduction(length, k_l[i], d_l[i], pool_kernel_size)
+            #length = self.calc_reduction(length, k_l[i], d_l[i], pool_kernel_size)
+            length = self.calc_reduction(length, k_l[i], d_l[i], p_l[i])
             
         self._n_channels = int(length)
         
@@ -152,6 +159,7 @@ class DeepCT(nn.Module):
         embeddings : torch.Tensor
             n_cell_types cell type embeddings.
         """
+        
         batch_size = x.size(0)
         
         cell_type_embeddings = self.pick_embeddings(embeddings, cell_targets)
@@ -159,7 +167,8 @@ class DeepCT(nn.Module):
         sequence_out = self.conv_net(x)
         sequence_out = sequence_out.repeat_interleave(repeats=torch.sum(cell_targets, dim=1), dim=0)
 
-        merge_embeddings = self.merge_net(cell_type_embeddings)
+        merge_embeddings = self.merge_net(embeddings)
+        merge_embeddings = self.pick_embeddings(merge_embeddings, cell_targets)
         merge_embeddings = merge_embeddings.unsqueeze(2)
         emb_size = merge_embeddings.size()
         merge_embeddings = merge_embeddings.expand(emb_size[0], emb_size[1], self._n_channels)
