@@ -1,6 +1,12 @@
 ---
 ops: [train, evaluate]
 lr: 0.0001
+lr_scheduler: {
+    class: !import torch.optim.lr_scheduler.CosineAnnealingLR,
+    class_args: {
+        T_max: 433900,
+    }
+}
 model: {
     path: src/deepct_model_multi_ct.py,
     class: DeepCT,
@@ -47,7 +53,7 @@ dataset: {
     }
 }
 train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
-    n_epochs: 100,
+    n_epochs: 10,
     report_stats_every_n_steps: 2000,
     save_checkpoint_every_n_steps: 2000,
     report_gt_feature_n_positives: 10,
