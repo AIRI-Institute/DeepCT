@@ -410,7 +410,7 @@ class TrainEncodeDatasetModel(object):
             outputs = self.model(sequence_batch)
 
         loss = self.criterion(outputs, targets)
-        predictions = nn.Sigmoid()(outputs)
+        predictions = torch.sigmoid(outputs)
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -539,7 +539,7 @@ class TrainEncodeDatasetModel(object):
                 else:
                     outputs = self.model(sequence_batch)
                 loss = self.criterion(outputs, targets)
-                predictions = nn.Sigmoid()(outputs)
+                predictions = torch.sigmoid(outputs)
 
                 all_predictions.append(predictions.data.cpu().numpy())
                 all_targets.append(targets.data.cpu().numpy())
