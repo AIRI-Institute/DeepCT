@@ -4,7 +4,7 @@ lr: 0.0001
 lr_scheduler: {
     class: !import torch.optim.lr_scheduler.CosineAnnealingLR,
     class_args: {
-        T_max: 433900,
+        T_max: 411380,
     }
 }
 model: {
@@ -38,6 +38,7 @@ dataset: {
         sequence_length: 1000,
         center_bin_to_predict: 200,
         feature_thresholds: 0.5,
+        position_skip: 120,
     },
     loader_args: {
         batch_size: 128,

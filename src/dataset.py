@@ -26,16 +26,16 @@ class EncodeDataset(torch.utils.data.Dataset):
     distinct_features : list(str)
         List of distinct `cell_type|feature_name|info` combinations available,
         e.g. `["K562|ZBTB33|None", "HCF|DNase|None", "HUVEC|DNase|None"]`.
-    target_features: list(str)
+    target_features : list(str)
         List of names of features we aim to predict, e.g. ["CTCF", "DNase"].
     intervals : list(tuple)
         Intervals to sample from in the format `(chrom, start, end)`,
         e.g. [("chr1", 550, 590), ("chr2", 6100, 6315)].
-    cell_wise: bool
+    cell_wise : bool
         Whether the dataset is supposed to return samples cell-wise,
         i.e. whether samples are `(sequence, cell_type, feature_values, feature_mask)`
         or `(sequence, feature_cell_values)`
-    transform: callable, optional
+    transform : callable, optional
         A callback function that takes `sequence, cell_type,
         feature_values, feature_mask` as arguments and returns
         their transformed version.
@@ -51,11 +51,14 @@ class EncodeDataset(torch.utils.data.Dataset):
         `GenomicFeatures` object.
     strand : str
         Default is '+'. Strand to sample from.
-    multi_ct_target: bool, optional
+    multi_ct_target : bool, optional
         Default is False. Make samples positional, like with cell_wise=False but
         fetch targets as if cell_wise=True and for all cell types at once, i.e.
         a sample would look like `(sequence, 0.0, target, target_mask)`,
         where `target` and `target_mask` have shape `(n_cell_types, n_target_features)`.
+    position_skip : int, optional
+        Default is 1. Use sequences centered at points that are `position_skip`
+        positions apart to avoid samples with big sequence overlaps.
 
     Attributes
     ----------
@@ -82,10 +85,12 @@ class EncodeDataset(torch.utils.data.Dataset):
         `sequence_length`.
     strand : str
         Strand to sample from.
-    multi_ct_target: bool, optional
+    multi_ct_target : bool
         Whether data is meant for multiple cell type model input or not.
-    n_cell_types: int
+    n_cell_types : int
         Total number of cell types present in the dataset.
+    position_skip : int
+        Number of sequence positions to skip between samples.
     """
 
     def __init__(
@@ -102,6 +107,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         feature_thresholds=0.5,
         strand="+",
         multi_ct_target=False,
+        position_skip=1,
     ):
         self.reference_sequence_path = reference_sequence_path
         self.reference_sequence = self._construct_ref_genome()
@@ -165,10 +171,12 @@ class EncodeDataset(torch.utils.data.Dataset):
                     self._feature_indices_by_cell_type_index != _FEATURE_NOT_PRESENT
                 )
 
+        self.position_skip = position_skip
+
         self.intervals = intervals
         self.intervals_length_sums = [0]
         for chrom, pos_start, pos_end in self.intervals:
-            interval_length = pos_end - pos_start
+            interval_length = (pos_end - pos_start) // self.position_skip + 1
             self.intervals_length_sums.append(
                 self.intervals_length_sums[-1] + interval_length
             )
@@ -212,7 +220,9 @@ class EncodeDataset(torch.utils.data.Dataset):
             cell_type_idx = 0
             position_idx = idx
         interval_idx = bisect.bisect(self.intervals_length_sums, position_idx) - 1
-        interval_pos = position_idx - self.intervals_length_sums[interval_idx]
+        interval_pos = (
+            position_idx - self.intervals_length_sums[interval_idx]
+        ) * self.position_skip
         chrom, pos_start, _ = self.intervals[interval_idx]
         return chrom, pos_start + interval_pos, cell_type_idx
 
