@@ -164,7 +164,7 @@ def criterion(**loss_config):
         with open(loss_config["pos_weights_path"]) as f:
             pos_weight = list(map(float, f.readlines()))
         pos_weight = torch.tensor(pos_weight)
-        return nn.BCEWithLogitsLoss(pos_weight)
+        return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     return nn.BCEWithLogitsLoss()
 
 
@@ -179,4 +179,4 @@ def get_optimizer(lr):
     # return (torch.optim.SGD, {"lr": lr, "weight_decay": 1e-6, "momentum": 0.9})
 
     # Option 2:
-    return (torch.optim.Adam, {"lr": lr})
+    return (torch.optim.Adam, {"lr": lr, "weight_decay": 1e-6})

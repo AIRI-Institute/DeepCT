@@ -26,7 +26,6 @@ def preprocess_fasta(fasta_path, gaps_path, chrom_ends_len=500, chrom_ends_path=
     Find gaps in fasta file from `fasta_path` and write them to `gaps_path`.
     If `chrom_ends_len > 0`, write intervals of length `chrom_ends_len`
     at the start and end of each chromosome to `chrom_ends_path`.
-    Returns `chr_counts` -- a dict of chromosome lengths
     """
     cur_chr = None
     cur_N_start = None
@@ -63,7 +62,20 @@ def preprocess_fasta(fasta_path, gaps_path, chrom_ends_len=500, chrom_ends_path=
                     "\t".join([chrom, str(chrom_cnt - chrom_ends_len), str(chrom_cnt)])
                 )
                 f3.write("\n")
-    return chr_counts
+
+
+def get_chrom_counts(chrom_ends_path):
+    """
+    Load chromosome sizes from `chrom_ends_path` file with
+    intervals at the ends of chromosomes
+    """
+    chrom_counts = {}
+    with open(chrom_ends_path) as f:
+        for line in f:
+            split_line = line.split("\t")
+            if split_line[1] != "0":
+                chrom_counts[split_line[0]] = int(split_line[2])
+    return chrom_counts
 
 
 def elongate_intervals(
@@ -152,10 +164,12 @@ def create_targets(
         for line in f1:
             feature_name = line.split("|")[1]
             if feature_name in target_features:
-                f2.write(line)
                 padded_line = pad_interval_line(line, pad_targets, chrom_counts)
+                if "chrM" in padded_line:
+                    continue
+                f2.write(line)
                 f3.write(padded_line)
-                distinct_feature = line.split()[-1].rstrip()
+                distinct_feature = line.split("\t")[-1].rstrip()
                 distinct_features.add(distinct_feature)
     distinct_features = sorted(distinct_features)
     with open(distinct_features_path, "w") as f:
@@ -199,13 +213,16 @@ def full_target_file_pipeline(
 
     # find gaps and chromosome ends in fasta
     gaps_path = os.path.join(bed_files_path, "gaps.bed")
-    chrom_ends_path = os.path.join(bed_files_path, "chrom_ends.bed")
-    chrom_counts = preprocess_fasta(
+    chrom_ends_path = os.path.join(bed_files_path, "chrom_ends_blacklist.bed")
+    preprocess_fasta(
         fasta_path,
         gaps_path,
         chrom_ends_len=blacklist_padding,
         chrom_ends_path=chrom_ends_path,
     )
+
+    # load fasta chromosome counts
+    chrom_counts = get_chrom_counts(chrom_ends_path)
 
     # elongate gaps to avoid using any unknown sites in the dataset
     long_gaps_path = os.path.join(bed_files_path, "long_gaps.bed")

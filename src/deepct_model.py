@@ -131,7 +131,7 @@ def criterion(**loss_config):
         with open(loss_config["pos_weights_path"]) as f:
             pos_weight = list(map(float, f.readlines()))
         pos_weight = torch.tensor(pos_weight)
-        return nn.BCEWithLogitsLoss(pos_weight)
+        return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     return nn.BCEWithLogitsLoss()
 
 
