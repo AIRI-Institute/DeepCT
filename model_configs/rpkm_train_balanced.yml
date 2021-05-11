@@ -1,9 +1,9 @@
 ---
 ops: [train, evaluate]
-lr: 0.00000001
+lr: 0.00005
 model: {
     path: src/models/rpkm/rpkm_long_seq_balanced.py,
-    class: DeepCT,
+    class: ExpResNet_Manvel,
     class_args: {
         sequence_length: 100000,
         n_cell_types: 49,
@@ -15,7 +15,7 @@ model: {
     #non_strand_specific: mean
 }
 sampler: !obj:selene_sdk.samplers.MultiFileSampler {
-    train_sampler: !obj:src.samplers.rpkm_file_sampler_balanced.DNaseFileSampler {
+    train_sampler: !obj:src.samplers.rpkm_file_sampler_balanced.RPKMFileSampler {
         filepath: /home/evmalkin/DeepCT/src/data/train_data_rpkm_log.bed,
         reference_sequence: !obj:selene_sdk.sequences.Genome {
             input_path: /mnt/datasets/DeepCT/male.hg19.fasta,
@@ -23,8 +23,11 @@ sampler: !obj:selene_sdk.samplers.MultiFileSampler {
         },
         n_cell_types: 49,
         sequence_length: 100000,
+        balance: True,
+        zero_expression: '-9.21',
+        keep_zero_percent: 0.05,
     },
-    validate_sampler: !obj:src.samplers.rpkm_file_sampler_balanced.DNaseFileSampler {
+    validate_sampler: !obj:src.samplers.rpkm_file_sampler_balanced.RPKMFileSampler {
         filepath: /home/evmalkin/DeepCT/src/data/validate_data_rpkm_log.bed,
         reference_sequence: !obj:selene_sdk.sequences.Genome {
             input_path: /mnt/datasets/DeepCT/male.hg19.fasta,
@@ -33,7 +36,7 @@ sampler: !obj:selene_sdk.samplers.MultiFileSampler {
         n_cell_types: 49,
         sequence_length: 100000,
     },
-    test_sampler: !obj:src.samplers.rpkm_file_sampler_balanced.DNaseFileSampler {
+    test_sampler: !obj:src.samplers.rpkm_file_sampler_balanced.RPKMFileSampler {
         filepath: /home/evmalkin/DeepCT/src/data/test_data_rpkm_log.bed,
         reference_sequence: !obj:selene_sdk.sequences.Genome {
             input_path: /mnt/datasets/DeepCT/male.hg19.fasta,
@@ -47,11 +50,12 @@ sampler: !obj:selene_sdk.samplers.MultiFileSampler {
     },
 }
 train_model: !obj:src.train.train_rpkm_balanced.TrainModel {
-    batch_size: 8,
+    batch_size: 64,
+    sub_batch_size: 8,
     validate_batch_size: 8,
     n_validation_samples: 5781,
     n_test_samples: 4709,
-    max_steps: 150000,
+    max_steps: 200000,
     report_stats_every_n_steps: 2000,
     report_gt_feature_n_positives: 0,
     use_cuda: True,
@@ -59,7 +63,9 @@ train_model: !obj:src.train.train_rpkm_balanced.TrainModel {
     logging_verbosity: 2,
     embeddings_path: src/data/rpkm_feature_embeddings.csv,
     metrics: {        
-        r2: !import sklearn.metrics.r2_score
+        r2: !import sklearn.metrics.r2_score,
+        spearmans: !import src.metrics.spearmanr_cc,
+        pearsons: !import src.metrics.pearsonr_cc,
     },
 }
 output_dir: DeepCT_outputs/expression_long_seq/rpkm_results_debug

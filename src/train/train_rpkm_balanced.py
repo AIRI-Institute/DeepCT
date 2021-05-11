@@ -1,12 +1,20 @@
 """
 This module provides the `TrainModel` class and supporting methods.
+
+It has been modified to retrieve the cell type embeddings used during training.
+
+It also works with RPKMFileSampler to pass cell targets to the model as input, 
+which specify the cell types to train on for each sequence in the mini-batch.
+
+The batch size can now be artifically increased by aggregating loss across 
+multiple "sub" batches, and then backpropagating. 
 """
+import csv
 import logging
 import math
 import os
 import shutil
 from time import strftime, time
-import csv
 
 import numpy as np
 import torch
@@ -81,6 +89,10 @@ class TrainModel(object):
         constructor.
     batch_size : int
         Specify the batch size to process examples.
+    sub_batch_size : int
+        The number of samples used for each forward pass 
+        (loss is aggregated across batch_size/sub_batch_size mini-batches).
+        Defaults to batch_size when not provided.
     validate_batch_size : int
         Specify the batch size to process validation examples.
     max_steps : int
@@ -203,6 +215,7 @@ class TrainModel(object):
         report_stats_every_n_steps,
         embeddings_path,
         output_dir,
+        sub_batch_size=None,
         save_checkpoint_every_n_steps=1000,
         save_new_checkpoints_after_n_steps=None,
         report_gt_feature_n_positives=10,
@@ -222,6 +235,16 @@ class TrainModel(object):
         self.sampler = data_sampler
         self.criterion = loss_criterion
         self.optimizer = optimizer_class(self.model.parameters(), **optimizer_kwargs)
+
+        if sub_batch_size == None:
+            self._sub_batch_size = batch_size
+            self._aggregate_steps = 1
+        else:
+            assert (
+                batch_size % sub_batch_size == 0
+            ), "batch_size must be a multiple of sub_batch_size."
+            self._sub_batch_size = sub_batch_size
+            self._aggregate_steps = batch_size // sub_batch_size
 
         self._batch_size = batch_size
         self._validate_batch_size = validate_batch_size
@@ -334,7 +357,7 @@ class TrainModel(object):
                 ["loss"] + sorted([x for x in self._validation_metrics.metrics.keys()])
             )
         )
-        
+
         self.embeddings = self.get_embeddings(embeddings_path)
 
     def _create_validation_set(self, n_samples=None):
@@ -353,7 +376,7 @@ class TrainModel(object):
         (
             self._validation_data,
             self._all_validation_targets,
-            self._all_validation_cell_targets
+            self._all_validation_cell_targets,
         ) = self.sampler.get_validation_set(
             self._validate_batch_size, n_samples=n_samples
         )
@@ -380,7 +403,11 @@ class TrainModel(object):
         """
         logger.info("Creating test dataset.")
         t_i = time()
-        self._test_data, self._all_test_targets, self._all_test_cell_targets = self.sampler.get_test_set(
+        (
+            self._test_data,
+            self._all_test_targets,
+            self._all_test_cell_targets,
+        ) = self.sampler.get_test_set(
             self._validate_batch_size, n_samples=self._n_test_samples
         )
         t_f = time()
@@ -395,7 +422,7 @@ class TrainModel(object):
             )
         )
 
-    def _get_batch(self):
+    def _get_batch(self, batch_size):
         """
         Fetches a mini-batch of examples
 
@@ -404,24 +431,24 @@ class TrainModel(object):
         SamplesBatch
             A batch containing the examples and targets.
         cell_targets
-            ndarray which maps targets to cell types used for each 
+            ndarray which maps targets to cell types used for each
             sample within the mini-batch.
 
         """
         t_i_sampling = time()
-        samples_batch, cell_targets = self.sampler.sample(batch_size=self._batch_size)
+        samples_batch, cell_targets = self.sampler.sample(batch_size=batch_size)
         t_f_sampling = time()
         logger.debug(
             ("[BATCH] Time to sample {0} examples: {1} s.").format(
-                self._batch_size, t_f_sampling - t_i_sampling
+                batch_size, t_f_sampling - t_i_sampling
             )
         )
         return samples_batch, cell_targets
-    
+
     def get_embeddings(self, embeddings_path):
         """
         Fetches all embeddings used for training the model
-        
+
         Returns
         -------
         embeddings
@@ -439,10 +466,10 @@ class TrainModel(object):
             embeddings.append(list(map(float, row[1:])))
 
         embeddings = torch.Tensor(np.array(embeddings, dtype="float32"))
-        
+
         if self.use_cuda:
             embeddings = embeddings.cuda()
-            
+
         return embeddings
 
     def train_and_validate(self):
@@ -457,6 +484,9 @@ class TrainModel(object):
         train_losses = []
         train_predictions = []
         train_targets = []
+
+        self.optimizer.zero_grad()
+
         for step in tqdm(range(self._start_step, self.max_steps)):
             t_i = time()
             prediction, target, loss = self.train(step)
@@ -511,21 +541,22 @@ class TrainModel(object):
         self.model.train()
         self.sampler.set_mode("train")
 
-        samples_batch, cell_targets = self._get_batch()
+        samples_batch, cell_targets = self._get_batch(batch_size=self._sub_batch_size)
         inputs, targets = samples_batch.torch_inputs_and_targets(self.use_cuda)
-        
+
         cell_targets = torch.from_numpy(cell_targets)
         if self.use_cuda:
             cell_targets = cell_targets.cuda()
-        
+
         predictions = self.model(inputs, cell_targets, self.embeddings)
         loss = self.criterion(predictions, targets)
 
-        self.optimizer.zero_grad()
         loss.backward()
-        self.optimizer.step()
-        self._scheduler.step()
-        self._log_lr(step)
+        if (step + 1) % self._aggregate_steps == 0:
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+            self._scheduler.step()
+            self._log_lr(step)
 
         return (
             predictions.cpu().detach().numpy(),
@@ -578,12 +609,12 @@ class TrainModel(object):
 
         logger.info("validation loss: {0}".format(validation_loss))
 
-#         cm = confusion_matrix(
-#             self._all_validation_targets.flatten(), all_predictions.flatten() > 0.5
-#         )
-#         cm_plot = ConfusionMatrixDisplay(confusion_matrix=cm)
-#         cm_plot.plot()
-#         self._writer.add_figure("confusion_matrix", cm_plot.figure_, global_step=step)
+        #         cm = confusion_matrix(
+        #             self._all_validation_targets.flatten(), all_predictions.flatten() > 0.5
+        #         )
+        #         cm_plot = ConfusionMatrixDisplay(confusion_matrix=cm)
+        #         cm_plot.plot()
+        #         self._writer.add_figure("confusion_matrix", cm_plot.figure_, global_step=step)
 
         return validation_loss
 
@@ -597,8 +628,8 @@ class TrainModel(object):
             A list of tuples of the data, where the first element is
             the example, and the second element is the label.
         all_cell_targets: list(numpy.ndarray)
-            A list of (batch_size, n_cell_types) ndarrays that maps 
-            targets to the cell types they refer to. 
+            A list of (batch_size, n_cell_types) ndarrays that maps
+            targets to the cell types they refer to.
 
         Returns
         -------
@@ -613,11 +644,11 @@ class TrainModel(object):
 
         for index, samples_batch in enumerate(data_in_batches):
             inputs, targets = samples_batch.torch_inputs_and_targets(self.use_cuda)
-            
+
             cell_targets = all_cell_targets[index]
             cell_targets = torch.from_numpy(cell_targets)
             if self.use_cuda:
-                cell_targets = cell_targets.cuda()            
+                cell_targets = cell_targets.cuda()
 
             with torch.no_grad():
                 predictions = self.model(inputs, cell_targets, self.embeddings)
@@ -661,7 +692,9 @@ class TrainModel(object):
             the validation set.
 
         """
-        average_loss, all_predictions = self._evaluate_on_data(self._validation_data, self._all_validation_cell_targets)
+        average_loss, all_predictions = self._evaluate_on_data(
+            self._validation_data, self._all_validation_cell_targets
+        )
         average_scores = self._compute_metrics(
             all_predictions, self._all_validation_targets, log_prefix="validation"
         )
@@ -683,7 +716,9 @@ class TrainModel(object):
         """
         if self._test_data is None:
             self.create_test_set()
-        average_loss, all_predictions = self._evaluate_on_data(self._test_data, self._all_test_cell_targets)
+        average_loss, all_predictions = self._evaluate_on_data(
+            self._test_data, self._all_test_cell_targets
+        )
 
         average_scores = self._test_metrics.update(
             all_predictions, self._all_test_targets
