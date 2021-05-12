@@ -90,9 +90,11 @@ class TrainModel(object):
     batch_size : int
         Specify the batch size to process examples.
     sub_batch_size : int
-        The number of samples used for each forward pass 
-        (loss is aggregated across batch_size/sub_batch_size mini-batches).
-        Defaults to batch_size when not provided.
+        The number of samples used for each forward pass.
+        This allows the effective training batch_size to be larger than allowed
+        by memory constraints by splitting the batch into sub-batches, 
+        aggregating loss across the sub-batches, and doing a backward pass every 
+        batch_size/sub_batch_size sub-batches. Defaults to batch_size when not provided.
     validate_batch_size : int
         Specify the batch size to process validation examples.
     max_steps : int
@@ -236,7 +238,7 @@ class TrainModel(object):
         self.criterion = loss_criterion
         self.optimizer = optimizer_class(self.model.parameters(), **optimizer_kwargs)
 
-        if sub_batch_size == None:
+        if sub_batch_size is None:
             self._sub_batch_size = batch_size
             self._aggregate_steps = 1
         else:
