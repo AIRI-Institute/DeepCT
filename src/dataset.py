@@ -222,7 +222,14 @@ class EncodeDataset(torch.utils.data.Dataset):
         interval_idx = bisect.bisect(self.intervals_length_sums, position_idx) - 1
         interval_pos = (
             position_idx - self.intervals_length_sums[interval_idx]
-        ) * self.position_skip
+        ) * self.position_skip + self.position_skip // 2
+
+        # handle the edge case when interval_pos is out of interval boundaries
+        interval_pos = min(
+            interval_pos,
+            self.intervals[interval_idx][2] - self.intervals[interval_idx][1],
+        )
+
         chrom, pos_start, _ = self.intervals[interval_idx]
         return chrom, pos_start + interval_pos, cell_type_idx
 
