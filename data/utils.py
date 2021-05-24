@@ -69,7 +69,7 @@ def get_chrom_counts(chrom_ends_path):
     Load chromosome sizes from `chrom_ends_path` file with
     intervals at the ends of chromosomes
     """
-    chrom_counts = {}
+    chrom_counts = {chrom: 0 for chrom in CHROMOSOMES}
     with open(chrom_ends_path) as f:
         for line in f:
             split_line = line.split("\t")

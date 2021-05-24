@@ -66,6 +66,8 @@ class EncodeDataset(torch.utils.data.Dataset):
         The reference sequence that examples are created from.
     target : selene_sdk.targets.Target
         The `selene_sdk.targets.Target` object holding the features.
+    target_features : list(str)
+        List of names of features we aim to predict, e.g. ["CTCF", "DNase"].
     cell_wise : bool
         Whether each sample is cell type specific or not
     intervals : list(int)
@@ -113,6 +115,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.reference_sequence = self._construct_ref_genome()
 
         self.distinct_features = distinct_features
+        self.target_features = target_features
         self.target_path = target_path
         self.feature_thresholds = feature_thresholds
         self.target = self._construct_target()
@@ -137,19 +140,19 @@ class EncodeDataset(torch.utils.data.Dataset):
         if self.cell_wise or self.multi_ct_target:
             self._cell_types = []
             cell_type_indices_by_feature_index = [
-                [] for i in range(len(target_features))
+                [] for i in range(len(self.target_features))
             ]
             for distinct_feature_index, distinct_feature in enumerate(
                 self.distinct_features
             ):
                 feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
-                if feature_name not in target_features:
+                if feature_name not in self.target_features:
                     continue
                 if cell_type not in self._cell_types:
                     self._cell_types.append(cell_type)
 
             self.n_cell_types = len(self._cell_types)
-            self.n_target_features = len(target_features)
+            self.n_target_features = len(self.target_features)
             self._feature_indices_by_cell_type_index = np.full(
                 (self.n_cell_types, self.n_target_features), _FEATURE_NOT_PRESENT
             )
@@ -158,9 +161,9 @@ class EncodeDataset(torch.utils.data.Dataset):
                 self.distinct_features
             ):
                 feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
-                if feature_name not in target_features:
+                if feature_name not in self.target_features:
                     continue
-                feature_index = target_features.index(feature_name)
+                feature_index = self.target_features.index(feature_name)
                 cell_type_index = self._cell_types.index(cell_type)
                 self._feature_indices_by_cell_type_index[cell_type_index][
                     feature_index
@@ -180,6 +183,13 @@ class EncodeDataset(torch.utils.data.Dataset):
             self.intervals_length_sums.append(
                 self.intervals_length_sums[-1] + interval_length
             )
+        if self.cell_wise:
+            if self.multi_ct_target:
+                self.target_size = self.target_mask.size
+            else:
+                self.target_size = self.n_target_features
+        else:
+            self.target_size = len(self.distinct_features)
 
     def __len__(self):
         if not self.cell_wise or self.multi_ct_target:
