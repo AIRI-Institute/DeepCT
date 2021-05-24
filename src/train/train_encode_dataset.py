@@ -350,6 +350,11 @@ class TrainEncodeDatasetModel(object):
             report_train_target_masks = None
         total_steps = self._start_step
 
+        # make necessary LR scheduler steps
+        # if they are not based on validation loss
+        for step in range(1, total_steps + 1):
+            self._update_and_log_lr_if_needed(step, log=False)
+
         for epoch in tqdm(range(self.n_epochs)):
             for batch in tqdm(self.train_loader):
                 t_i = time()
@@ -459,7 +464,7 @@ class TrainEncodeDatasetModel(object):
             loss.item(),
         )
 
-    def _update_and_log_lr_if_needed(self, total_steps, validation_loss=None):
+    def _update_and_log_lr_if_needed(self, total_steps, validation_loss=None, log=True):
         # torch.optim.lr_scheduler.ReduceLROnPlateau is the only scheduler
         # that takes some value as input to `.step()`
         if self.scheduler is not None:
@@ -467,12 +472,14 @@ class TrainEncodeDatasetModel(object):
                 self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
             ):
                 self.scheduler.step()
-                self._log_lr(total_steps)
+                if log:
+                    self._log_lr(total_steps)
             elif validation_loss is not None and isinstance(
                 self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
             ):
                 self.scheduler.step(validation_loss)
-                self._log_lr(total_steps)
+                if log:
+                    self._log_lr(total_steps)
 
     def _log_train_metrics_and_clean_cache(
         self,
