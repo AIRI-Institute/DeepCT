@@ -25,6 +25,12 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
+# maximum size of targets stored in-memory for validation metrics computation,
+# value derived experimentally using data loader of size 2000, batch size 64,
+# 194 cell types, and 201 target features
+MAX_TOTAL_VAL_TARGET_SIZE = 2000 * 64 * 194 * 201
+
+
 logger = logging.getLogger("selene")
 
 
@@ -40,6 +46,7 @@ def _metrics_logger(name, out_filepath):
     return logger
 
 
+# TODO: move this to utils
 def expand_dims(x):
     if len(x.shape) == 1:
         x = np.expand_dims(x, axis=1)
@@ -211,10 +218,7 @@ class TrainEncodeDatasetModel(object):
                 scheduler_kwargs = dict()
             self.scheduler = scheduler_class(self.optimizer, **scheduler_kwargs)
 
-        if train_loader.dataset.cell_wise:
-            self.masked_targets = True
-        else:
-            self.masked_targets = False
+        self.masked_targets = train_loader.dataset.cell_wise
         self.batch_size = train_loader.batch_size
         self.n_epochs = n_epochs
         self.nth_step_report_stats = report_stats_every_n_steps
@@ -258,7 +262,12 @@ class TrainEncodeDatasetModel(object):
         )
 
         self._validation_metrics = PerformanceMetrics(
-            lambda idx: self.train_loader.dataset.distinct_features[idx],
+            lambda idx: self.train_loader.dataset.target_features[idx],
+            report_gt_feature_n_positives=report_gt_feature_n_positives,
+            metrics=metrics,
+        )
+        self._test_metrics = PerformanceMetrics(
+            lambda idx: self.train_loader.dataset.target_features[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
         )
@@ -315,6 +324,15 @@ class TrainEncodeDatasetModel(object):
 
         self.score_threshold = score_threshold
 
+        self.val_reduction_factor = 1
+        val_batch_size = self.val_loader.batch_size
+        val_target_size = self.val_loader.dataset.target_size
+        total_val_target_size = len(self.val_loader) * val_batch_size * val_target_size
+        if total_val_target_size > MAX_TOTAL_VAL_TARGET_SIZE:
+            self.val_reduction_factor = math.ceil(
+                total_val_target_size / MAX_TOTAL_VAL_TARGET_SIZE
+            )
+
     def train_and_validate(self):
         """
         Trains the model and measures validation performance.
@@ -331,6 +349,7 @@ class TrainEncodeDatasetModel(object):
         else:
             report_train_target_masks = None
         total_steps = self._start_step
+
         for epoch in tqdm(range(self.n_epochs)):
             for batch in tqdm(self.train_loader):
                 t_i = time()
@@ -567,6 +586,23 @@ class TrainEncodeDatasetModel(object):
                     outputs = self.model(sequence_batch)
                 loss = self.criterion(outputs, targets)
                 predictions = torch.sigmoid(outputs)
+
+                predictions = predictions.view(-1, predictions.shape[-1])
+                targets = targets.view(-1, targets.shape[-1])
+                if self.masked_targets:
+                    target_mask = target_mask.view(-1, target_mask.shape[-1])
+                if self.val_reduction_factor > 1:
+                    reduced_val_batch_size = (
+                        predictions.shape[0] // self.val_reduction_factor
+                    )
+                    reduced_index = np.random.choice(
+                        predictions.shape[0], reduced_val_batch_size
+                    )
+
+                    predictions = predictions[reduced_index]
+                    targets = targets[reduced_index]
+                    if self.masked_targets:
+                        target_mask = target_mask[reduced_index]
 
                 all_predictions.append(predictions.data.cpu().numpy())
                 all_targets.append(targets.data.cpu().numpy())
