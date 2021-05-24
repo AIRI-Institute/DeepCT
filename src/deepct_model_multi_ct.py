@@ -105,13 +105,25 @@ class DeepCT(nn.Module):
             # nn.Sigmoid(),
         )
 
+    def get_cell_type_embeddings(self):
+        """Retrieve cell type embeddings learned by the model."""
+        device = next(self.parameters()).device
+        with torch.no_grad():
+            all_cell_types = torch.eye(self._n_cell_types).to(device)
+            embeddings = self.cell_type_net(all_cell_types)
+        return embeddings.detach().cpu()
+
+    """
+    # Doesn't take linear layer bias into account
     def log_cell_type_embeddings_to_tensorboard(self, cell_type_labels, output_dir):
         writer = SummaryWriter(output_dir)
+
         writer.add_embedding(
             self.cell_type_net[0].weight.transpose(0, 1), cell_type_labels
         )
         writer.flush()
         writer.close()
+    """
 
     def forward(self, sequence_batch, cell_type_batch):
         """Forward propagation of a batch.
