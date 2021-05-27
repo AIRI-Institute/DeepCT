@@ -1,0 +1,72 @@
+---
+ops: [evaluate]
+lr: 0.0001
+lr_scheduler: {
+    class: !import torch.optim.lr_scheduler.CosineAnnealingLR,
+    class_args: {
+        T_max: 411380,
+    }
+}
+model: {
+    path: src/deepct_model_multi_ct.py,
+    class: DeepCT,
+    class_args: {
+        sequence_length: 1000,
+        n_cell_types: 125,
+        sequence_embedding_length: 256,
+        cell_type_embedding_length: 32,
+        final_embedding_length: 256,
+        n_genomic_features: 1,
+    }
+}
+dataset: {
+    path: src/dataset.py,
+    class: EncodeDataset,
+    sampler_class: LargeRandomSampler,
+
+    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/dnase/distinct_features.txt,
+    target_features_path: /mnt/datasets/DeepCT/dataset_data/dnase/target_features.txt,
+    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/dnase/target_intervals.bed,
+    test_holdout: [chr8, chr9],
+    validation_holdout: [chr6, chr7],
+    
+    dataset_args: {
+        reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
+        target_path: /mnt/datasets/DeepCT/dataset_data/dnase/sorted_data.bed.gz,
+        cell_wise: True,
+        multi_ct_target: True,
+        sequence_length: 1000,
+        center_bin_to_predict: 200,
+        feature_thresholds: 0.5,
+        position_skip: 120,
+    },
+    loader_args: {
+        batch_size: 128,
+        num_workers: 16,
+    },
+    train_transform: !obj:torchvision.transforms.Compose {
+        transforms: [
+            !obj:src.transforms.PermuteSequenceChannels {},
+            !obj:src.transforms.RandomReverseStrand {
+                p: 0.5,
+            }
+        ],
+    }
+}
+evaluate_model: !obj:src.evaluation.evaluate_encode_dataset.EvaluateModel {
+    trained_model_path: /home/msindeeva/DeepCT/DeepCT_outputs/encode/ct_v2/dnase/multi_ct/AdamW_COS_LR0001/2021-04-27-13-37-01/best_model.pth.tar,
+    report_gt_feature_n_positives: 10,
+    device: 'cuda:0',
+    data_parallel: False,
+    log_cell_type_embeddings_to_tensorboard: True,
+    metrics: {
+        accuracy: !import src.metrics.accuracy_score,
+        average_precision: !import sklearn.metrics.average_precision_score,
+        f1: !import src.metrics.f1_score,
+        precision: !import src.metrics.precision_score,
+        recall: !import src.metrics.recall_score,
+        roc_auc: !import sklearn.metrics.roc_auc_score,
+    },
+}
+random_seed: 1447
+...
