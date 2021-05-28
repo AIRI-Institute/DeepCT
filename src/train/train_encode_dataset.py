@@ -435,6 +435,8 @@ class TrainEncodeDatasetModel(object):
             outputs = self.model(sequence_batch)
 
         loss = self.criterion(outputs, targets)
+        if self.criterion.reduction == "sum":
+            loss = loss / self.criterion.weight.sum()
         predictions = torch.sigmoid(outputs)
 
         self.optimizer.zero_grad()
@@ -581,6 +583,8 @@ class TrainEncodeDatasetModel(object):
                 else:
                     outputs = self.model(sequence_batch)
                 loss = self.criterion(outputs, targets)
+                if self.criterion.reduction == "sum":
+                    loss = loss / self.criterion.weight.sum()
                 predictions = torch.sigmoid(outputs)
 
                 predictions = predictions.view(-1, predictions.shape[-1])
