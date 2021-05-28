@@ -19,7 +19,9 @@ model: {
         n_genomic_features: 201,
     }
 }
-
+criterion: !obj:torch.nn.BCEWithLogitsLoss {
+    reduction: 'sum',
+}
 dataset: {
     path: src/dataset.py,
     class: EncodeDataset,
@@ -30,7 +32,7 @@ dataset: {
     sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/all_features/target_intervals.bed,
     test_holdout: [chr8, chr9],
     validation_holdout: [chr6, chr7],
-    
+
     dataset_args: {
         reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
         target_path: /mnt/datasets/DeepCT/dataset_data/all_features/sorted_data.bed.gz,
