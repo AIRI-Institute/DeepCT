@@ -676,7 +676,9 @@ class TrainEncodeDatasetModel(object):
             all_target_masks,
         ) = self._evaluate_on_data(data_loader)
 
-        average_scores = self._test_metrics.update(all_predictions, all_targets)
+        average_scores = self._test_metrics.update(
+            all_predictions, all_targets, all_target_masks
+        )
         np.savez_compressed(
             os.path.join(self.output_dir, "test_predictions.npz"), data=all_predictions
         )
