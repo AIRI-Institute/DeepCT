@@ -30,12 +30,11 @@ def process_bigwig(
     """
 
     def get_valid_chrms(bw):
-        def get_valid_chrms(bw):
-            return {
-                k: v
-                for k, v in bw.chroms().items()
-                if "rand" not in k and "chrM" not in k and "chrY" not in k
-            }
+        return {
+            k: v
+            for k, v in bw.chroms().items()
+            if "rand" not in k and "chrM" not in k and "chrY" not in k
+        }
 
     # open bigWig
     bw = pyBigWig.open(bigWig_file)
@@ -92,7 +91,7 @@ def process_bigwig(
 def check_log(logfile, f):
     with open(logfile) as fin:
         for line in fin:
-            if line.find(f) != -1 and line.find(success_message) != -1:
+            if (f in line) and (success_message in line):
                 return True
     return False
 
@@ -152,7 +151,7 @@ logger.info("Found %d target files" % len(target_files))
 
 metadata = pd.read_csv(args.metadata, sep="\t").set_index("id")
 
-with  open(os.path.join(args.out, "all_target.txt"), filemode) as all_targets:
+with open(os.path.join(args.out, "all_target.txt"), filemode) as all_targets:
     chrms_dict = None
     for file in target_files:
         destination = os.path.abspath(
@@ -174,8 +173,10 @@ with  open(os.path.join(args.out, "all_target.txt"), filemode) as all_targets:
             treatment = "None"
         cell_type = metadata.loc[cell_type]["ct"]
 
-        if treatment != "None" and treatment not in cell_type:
+        if treatment != "None" and treatment in cell_type:
             cell_type = cell_type.split(treatment)[0]
+        if cell_type.endswith("_treated_with_"):
+            cell_type = cell_type.split("_treated_with_")[0]
         full_cell_type = "|".join([cell_type, feature, str(treatment)])
 
         logging.info("Processing " + file)
