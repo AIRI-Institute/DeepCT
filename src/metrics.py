@@ -1,3 +1,5 @@
+import functools
+
 import numpy as np
 import scipy.stats
 import sklearn.metrics as metrics
@@ -10,35 +12,62 @@ def _to_binary(x: np.ndarray, threshold=0.5) -> np.ndarray:
     return np.where(x > threshold, 1, 0).astype(int)
 
 
-def accuracy_score(x: np.ndarray, y: np.ndarray) -> float:
-    binary_x = _to_binary(x)
-    binary_y = _to_binary(y)
-    return metrics.accuracy_score(binary_x, binary_y)
+def binary_inputs(score_func):
+    def binary_wrapper(y_true, y_pred, threshold=0.5, **kwargs):
+        binary_y_true = _to_binary(y_true, threshold)
+        binary_y_pred = _to_binary(y_pred, threshold)
+        return score_func(binary_y_true, binary_y_pred, **kwargs)
+
+    return binary_wrapper
 
 
-def f1_score(x: np.ndarray, y: np.ndarray) -> float:
-    binary_x = _to_binary(x)
-    binary_y = _to_binary(y)
-    return metrics.f1_score(binary_x, binary_y)
+def threshold_wrapper(score_func, threshold):
+    return functools.partial(score_func, threshold=threshold)
 
 
-def precision_score(x: np.ndarray, y: np.ndarray) -> float:
-    binary_x = _to_binary(x)
-    binary_y = _to_binary(y)
-    return metrics.precision_score(binary_x, binary_y)
+@binary_inputs
+def accuracy_score(y_true: np.ndarray, y_pred: np.ndarray, **kwargs) -> float:
+    return metrics.accuracy_score(y_true, y_pred, **kwargs)
 
 
-def recall_score(x: np.ndarray, y: np.ndarray) -> float:
-    binary_x = _to_binary(x)
-    binary_y = _to_binary(y)
-    return metrics.recall_score(binary_x, binary_y)
+@binary_inputs
+def f1_score(y_true: np.ndarray, y_pred: np.ndarray, **kwargs) -> float:
+    return metrics.f1_score(y_true, y_pred, **kwargs)
 
 
-def spearmanr_cc(x: np.ndarray, y: np.ndarray) -> float:
+@binary_inputs
+def precision_score(y_true: np.ndarray, y_pred: np.ndarray, **kwargs) -> float:
+    return metrics.precision_score(y_true, y_pred, **kwargs)
+
+
+@binary_inputs
+def recall_score(y_true: np.ndarray, y_pred: np.ndarray, **kwargs) -> float:
+    return metrics.recall_score(y_true, y_pred, **kwargs)
+
+
+@binary_inputs
+def jaccard_score(y_true: np.ndarray, y_pred: np.ndarray, **kwargs) -> float:
+    return metrics.jaccard_score(y_true, y_pred, **kwargs)
+
+
+def jaccard_multi_threshold(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    thresholds=[0.1, 0.3, 0.5, 0.7, 0.9],
+    **kwargs
+) -> float:
+    multi_thresh_jaccard = []
+    for threshold in thresholds:
+        multi_thresh_jaccard.append(jaccard_score(y_true, y_pred, threshold=threshold))
+    multi_thresh_jaccard = np.array(multi_thresh_jaccard)
+    return multi_thresh_jaccard
+
+
+def spearmanr_cc(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     # Returns Spearman's correlation coefficient
-    return scipy.stats.spearmanr(x, y)[0]
+    return scipy.stats.spearmanr(y_true, y_pred)[0]
 
 
-def pearsonr_cc(x: np.ndarray, y: np.ndarray) -> float:
+def pearsonr_cc(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     # Returns Pearson's r
-    return scipy.stats.pearsonr(x, y)[0]
+    return scipy.stats.pearsonr(y_true, y_pred)[0]
