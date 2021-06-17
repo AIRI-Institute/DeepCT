@@ -44,3 +44,26 @@ class RandomReverseStrand(torch.nn.Module):
         if torch.rand(1) < self.p:
             return (np.flip(seq).copy(), *sample[1:])
         return sample
+
+
+class MaskFeatures(torch.nn.Module):
+    """
+    Masks features given by `feature_indices`.
+
+    Sets sample mask of features at given indices to `False` so that
+    the loss sample weights set by this mask become 0's
+
+    Parameters
+    ----------
+    feature_indices:  np.ndarray
+        Indices of features to be masked out
+    """
+
+    def __init__(self, feature_indices_mask):
+        super().__init__()
+        self.idx_to_mask = feature_indices_mask
+
+    def forward(self, sample):
+        mask = sample[3]
+        mask[..., self.idx_to_mask] = False
+        return (*sample[:3], mask)
