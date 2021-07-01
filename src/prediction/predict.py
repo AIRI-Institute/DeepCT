@@ -5,23 +5,19 @@ Based on selene's predict/AnalyzeSequence.py with minor modifications
 """
 import math
 import os
-from time import time
 import warnings
+from time import time
 
 import numpy as np
 import pyfaidx
 import torch
 import torch.nn as nn
-
-from selene_sdk.utils import (
-    initialize_logger,
-    load_model_from_state_dict,
+from selene_sdk.predict._common import (
+    _pad_sequence,
+    _truncate_sequence,
+    get_reverse_complement,
+    get_reverse_complement_encoding,
 )
-from selene_sdk.predict._common import _pad_sequence
-from selene_sdk.predict._common import _truncate_sequence
-from selene_sdk.predict._common import get_reverse_complement
-from selene_sdk.predict._common import get_reverse_complement_encoding
-from tqdm import tqdm
 
 # from ._in_silico_mutagenesis import _ism_sample_id
 # from ._in_silico_mutagenesis import in_silico_mutagenesis_sequences
@@ -34,9 +30,15 @@ from tqdm import tqdm
 # from .predict_handlers import AbsDiffScoreHandler
 # from .predict_handlers import DiffScoreHandler
 # from .predict_handlers import LogitScoreHandler
-from selene_sdk.predict.predict_handlers import WritePredictionsHandler#, WritePredictionsHandler_
-from selene_sdk.predict.predict_handlers import WritePredictionsMultiCtBigWigHandler
+from selene_sdk.predict.predict_handlers import (  # , WritePredictionsHandler_
+    WritePredictionsHandler,
+    WritePredictionsMultiCtBigWigHandler,
+)
+from selene_sdk.utils import initialize_logger, load_model_from_state_dict
+from tqdm import tqdm
+
 # from .predict_handlers import WriteRefAltHandler
+
 
 class AnalyzeSequences(object):
     """
@@ -62,9 +64,8 @@ class AnalyzeSequences(object):
         The names of the features that the model is predicting.
     batch_size : int, optional
         Default is 64. The size of the mini-batches to use.
-    use_cuda : bool, optional
-        Default is `False`. Specifies whether CUDA-enabled GPUs are available
-        for torch to use.
+    device : str
+        Specifies device to use (i.e. 'cpu' or 'cuda:0').
     data_parallel : bool, optional
         Default is `False`. Specify whether multiple GPUs are available for
         torch to use during training.
@@ -121,26 +122,29 @@ class AnalyzeSequences(object):
         if None cells will be labaled by numbers in numerical order
     """
 
-    def __init__(self,
-                 model,
-                 trained_model_path,
-                 sequence_length,
-                 features,
-                 n_cell_types,
-                 reference_sequence,
-                 batch_size=64,
-                 device='cpu',
-                 data_parallel=False,
-                 write_mem_limit=1500,
-                 distinct_features=None
-                 ):
+    def __init__(
+        self,
+        model,
+        trained_model_path,
+        sequence_length,
+        features,
+        n_cell_types,
+        reference_sequence,
+        batch_size=64,
+        device="cpu",
+        data_parallel=False,
+        write_mem_limit=500,
+        distinct_features=None,
+    ):
         """
         Constructs a new `AnalyzeSequences` object.
         """
         self.model = model
+        self.device = torch.device(device)
 
         trained_model = torch.load(
-            trained_model_path, map_location=lambda storage, location: storage
+            trained_model_path,
+            map_location=self.device,  # lambda storage, location: storage
         )
         if "state_dict" in trained_model:
             self.model = load_model_from_state_dict(trained_model["state_dict"], model)
@@ -149,7 +153,6 @@ class AnalyzeSequences(object):
 
         self.model.eval()
 
-        self.device = torch.device(device)
         self.data_parallel = data_parallel
 
         if self.data_parallel:
@@ -172,7 +175,7 @@ class AnalyzeSequences(object):
         if distinct_features is not None:
             self._cell_types = []
             for distinct_feature_index, distinct_feature in enumerate(
-                    distinct_features
+                distinct_features
             ):
                 feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
                 if feature_name not in self.features:
@@ -180,7 +183,7 @@ class AnalyzeSequences(object):
                 if cell_type not in self._cell_types:
                     self._cell_types.append(cell_type)
         else:
-            self._cell_types=list(map(str,range(self.n_cell_types)))
+            self._cell_types = list(map(str, range(self.n_cell_types)))
 
         assert self.n_cell_types == self.model._n_cell_types == len(self._cell_types)
         # self.cell_types_one_hot = np.zeros(shape=(self.n_cell_types, self.n_cell_types),
@@ -202,13 +205,14 @@ class AnalyzeSequences(object):
             cell_type = cell_type + "_" + addon
         return feature_name, cell_type
 
-    def _initialize_reporters(self,
-                              save_data,
-                              output_path_prefix,
-                              output_format,
-                              colnames_for_ids,
-                              output_size=None,
-                            ):
+    def _initialize_reporters(
+        self,
+        save_data,
+        output_path_prefix,
+        output_format,
+        colnames_for_ids,
+        output_size=None,
+    ):
         """
         Initialize the handlers to which Selene reports model predictions
 
@@ -240,28 +244,33 @@ class AnalyzeSequences(object):
             List of reporters to update as Selene receives model predictions.
 
         """
-        assert save_data==["predictions"]
+        assert save_data == ["predictions"]
         reporters = []
 
-        if output_format in ["tsv","hdf5"]:
-            constructor_args = [self.features,
-                                colnames_for_ids,
-                                output_path_prefix,
-                                output_format,
-                                output_size,
-                                self._write_mem_limit // len(save_data)]
-            reporters.append(WritePredictionsHandler(
-                    *constructor_args, write_labels=True))
+        if output_format in ["tsv", "hdf5"]:
+            constructor_args = [
+                self.features,
+                colnames_for_ids,
+                output_path_prefix,
+                output_format,
+                output_size,
+                self._write_mem_limit // len(save_data),
+            ]
+            reporters.append(
+                WritePredictionsHandler(*constructor_args, write_labels=True)
+            )
         else:
             raise NotImplementedError
         return reporters
 
-    def _get_sequences_from_bed_file(self,
-                                     input_path,
-                                     strand_index=None,
-                                     sample_continuous=False,
-                                     output_NAs_to_file=None,
-                                     reference_sequence=None):
+    def _get_sequences_from_bed_file(
+        self,
+        input_path,
+        strand_index=None,
+        sample_continuous=False,
+        output_NAs_to_file=None,
+        reference_sequence=None,
+    ):
         """
         Get the adjusted sequence coordinates and labels corresponding
         to each row of coordinates in an input BED file. The coordinates
@@ -303,7 +312,7 @@ class AnalyzeSequences(object):
             if not chrom.startswith("chr"):
                 check_chr = False
                 break
-        with open(input_path, 'r') as read_handle:
+        with open(input_path, "r") as read_handle:
             for i, line in enumerate(read_handle):
                 cols = line.strip().split()
                 if len(cols) < 3:
@@ -312,22 +321,27 @@ class AnalyzeSequences(object):
                 chrom = cols[0]
                 start = cols[1]
                 end = cols[2]
-                strand = '.'
+                strand = "."
                 if isinstance(strand_index, int) and len(cols) > strand_index:
                     strand = cols[strand_index]
-                if 'chr' not in chrom and check_chr is True:
+                if "chr" not in chrom and check_chr is True:
                     chrom = "chr{0}".format(chrom)
-                if not str.isdigit(start) or not str.isdigit(end) \
-                        or chrom not in self.reference_sequence.genome:
+                if (
+                    not str.isdigit(start)
+                    or not str.isdigit(end)
+                    or chrom not in self.reference_sequence.genome
+                ):
                     na_rows.append(line)
                     continue
                 start, end = int(start), int(end)
                 if sample_continuous:
-                    for mid_pos in range(start,end+1):
+                    for mid_pos in range(start, end + 1):
                         seq_start = mid_pos - self._start_radius
                         seq_end = mid_pos + self._end_radius
                         if reference_sequence:
-                            if not reference_sequence.coords_in_bounds(chrom, seq_start, seq_end):
+                            if not reference_sequence.coords_in_bounds(
+                                chrom, seq_start, seq_end
+                            ):
                                 na_rows.append(line)
                                 continue
                         sequences.append((chrom, seq_start, seq_end, strand))
@@ -337,14 +351,16 @@ class AnalyzeSequences(object):
                     seq_start = mid_pos - self._start_radius
                     seq_end = mid_pos + self._end_radius
                     if reference_sequence:
-                        if not reference_sequence.coords_in_bounds(chrom, seq_start, seq_end):
+                        if not reference_sequence.coords_in_bounds(
+                            chrom, seq_start, seq_end
+                        ):
                             na_rows.append(line)
                             continue
                     sequences.append((chrom, seq_start, seq_end, strand))
                     labels.append((i, chrom, start, end, strand))
 
         if reference_sequence and output_NAs_to_file:
-            with open(output_NAs_to_file, 'w') as file_handle:
+            with open(output_NAs_to_file, "w") as file_handle:
                 for na_row in na_rows:
                     file_handle.write(na_row)
         return sequences, labels
@@ -372,35 +388,42 @@ class AnalyzeSequences(object):
 
         # note that we need transpose to convert from
         # seqlen x alphabet to seqlen x alphabet, which is expected by model
-        batch_sequences = torch.from_numpy(batch_sequences).float().transpose(1, 2).to(self.device)
+        batch_sequences = (
+            torch.from_numpy(batch_sequences).float().transpose(1, 2).to(self.device)
+        )
 
-        batch_cell_types = "dummy" # note that to allow compatibility with older models
-                                   # cell type batch is generated as diagona matrix N_cell_types x N_cell_types
-                                   # inside the forward pass function of the model
+        batch_cell_types = "dummy"  # note that to allow compatibility with older models
+        # cell type batch is generated as diagona matrix N_cell_types x N_cell_types
+        # inside the forward pass function of the model
         with torch.no_grad():
             outputs = self.model(batch_sequences, batch_cell_types)
 
         predictions = torch.sigmoid(outputs)
         return predictions
 
-    def _get_predictions(self,
-                         sequences,
-                         batch_ids):
+    def _get_predictions(self, sequences, batch_ids):
         # as soon as we got batch_size of different sequences
         # we pass them to the model as tensor batch_size x alphabet x seq_len and obtain
         # predictions tensor batch_size x n_cell_types x n_features
         # next we update batch ids to add info about features and cell types
 
-
         preds = self._predict(sequences)
-        batch_size = sequences.shape[0] # note that for last batch it could be smaller than self.batch_size
-        preds = preds.cpu().numpy().reshape((batch_size*self.n_cell_types,
-                                                          len(self.features)))
+        batch_size = sequences.shape[
+            0
+        ]  # note that for last batch it could be smaller than self.batch_size
+        preds = (
+            preds.cpu()
+            .numpy()
+            .reshape((batch_size * self.n_cell_types, len(self.features)))
+        )
 
         # update prediction information (batch_ids) to add cell type and feature info
 
-        cell_type_updated_batch_ids = [bi + (cell_type_id,) for bi in batch_ids \
-                                       for cell_type_id in range(self.n_cell_types)]
+        cell_type_updated_batch_ids = [
+            bi + (cell_type_id,)
+            for bi in batch_ids
+            for cell_type_id in range(self.n_cell_types)
+        ]
         return preds, cell_type_updated_batch_ids
 
     def _get_bigWig_header(self, seq_coords):
@@ -412,133 +435,165 @@ class AnalyzeSequences(object):
                 chrms.append(chrm)
                 sizes.append(end)
                 continue
-            if chrm != chrms[-1] or end<=sizes[-1]:
-                raise Exceptions("Unsorted sequences cann't be passed to bigWig writer")
+            if chrm != chrms[-1] or end <= sizes[-1]:
+                raise Exception("Unsorted sequences cann't be passed to bigWig writer")
             sizes[-1] = end
-        return list(zip(chrms,sizes))
+        return list(zip(chrms, sizes))
 
+    def get_predictions_for_bed_file(
+        self,
+        input_path,
+        output_dir,
+        output_format="tsv",
+        strand_index=None,
+        sample_continuous=False,
+    ):
+        """
+        Get model predictions for sequences specified as genome coordinates
+        in a BED file. Coordinates do not need to be the same length as the
+        model expected sequence input--predictions will be centered at the
+        midpoint of the specified start and end coordinates if
+        sample_continuous == False. If sample_continuous == True model will
+        retrieve a sequence of required length for each point in range from
+        start to end coordinate.
 
-    def get_predictions_for_bed_file(self,
-                                         input_path,
-                                         output_dir,
-                                         output_format="tsv",
-                                         strand_index=None,
-                                         sample_continuous=False):
-            """
-            Get model predictions for sequences specified as genome coordinates
-            in a BED file. Coordinates do not need to be the same length as the
-            model expected sequence input--predictions will be centered at the
-            midpoint of the specified start and end coordinates.
+        Parameters
+        ----------
+        input_path : str
+            Input path to the BED file.
+        output_dir : str
+            Output directory to write the model predictions.
+        output_format : {'tsv', 'hdf5', 'bigWig'}, optional
+            Default is 'tsv'. Choose whether to save TSV or HDF5 output files.
+            TSV is easier to access (i.e. open with text editor/Excel) and
+            quickly peruse, whereas HDF5 files must be accessed through
+            specific packages/viewers that support this format (e.g. h5py
+            Python package). Choose
 
-            Parameters
-            ----------
-            input_path : str
-                Input path to the BED file.
-            output_dir : str
-                Output directory to write the model predictions.
-            output_format : {'tsv', 'hdf5', 'bigWig'}, optional
-                Default is 'tsv'. Choose whether to save TSV or HDF5 output files.
-                TSV is easier to access (i.e. open with text editor/Excel) and
-                quickly peruse, whereas HDF5 files must be accessed through
-                specific packages/viewers that support this format (e.g. h5py
-                Python package). Choose
+                * 'tsv' if your list of sequences is relatively small
+                  (:math:`10^4` or less in order of magnitude) and/or your
+                  model has a small number of features (<1000).
+                * 'hdf5' for anything larger and/or if you would like to
+                  access the predictions/scores as a matrix that you can
+                  easily filter, apply computations, or use in a subsequent
+                  classifier/model. In this case, you may access the matrix
+                  using `mat["data"]` after opening the HDF5 file using
+                  `mat = h5py.File("<output.h5>", 'r')`. The matrix columns
+                  are the features and will match the same ordering as your
+                  features .txt file (same as the order your model outputs
+                  its predictions) and the matrix rows are the sequences.
+                  Note that the row labels (FASTA description/IDs) will be
+                  output as a separate .txt file (should match the ordering
+                  of the sequences in the input FASTA).
 
-                    * 'tsv' if your list of sequences is relatively small
-                      (:math:`10^4` or less in order of magnitude) and/or your
-                      model has a small number of features (<1000).
-                    * 'hdf5' for anything larger and/or if you would like to
-                      access the predictions/scores as a matrix that you can
-                      easily filter, apply computations, or use in a subsequent
-                      classifier/model. In this case, you may access the matrix
-                      using `mat["data"]` after opening the HDF5 file using
-                      `mat = h5py.File("<output.h5>", 'r')`. The matrix columns
-                      are the features and will match the same ordering as your
-                      features .txt file (same as the order your model outputs
-                      its predictions) and the matrix rows are the sequences.
-                      Note that the row labels (FASTA description/IDs) will be
-                      output as a separate .txt file (should match the ordering
-                      of the sequences in the input FASTA).
+        strand_index : int or None, optional
+            Default is None. If the trained model makes strand-specific
+            predictions, your input file may include a column with strand
+            information (strand must be one of {'+', '-', '.'}). Specify
+            the index (0-based) to use it. Otherwise, by default '+' is used.
 
-            strand_index : int or None, optional
-                Default is None. If the trained model makes strand-specific
-                predictions, your input file may include a column with strand
-                information (strand must be one of {'+', '-', '.'}). Specify
-                the index (0-based) to use it. Otherwise, by default '+' is used.
+        sample_continuous : bool
+            if True, each record in .bed file will be treated as continuous target
+            interval for prediction, i.e. prediction will be generated for each
+            point between start and end. If False, each record will be treated as
+            single target region, and predicion will be generated for midpoint (between
+            start and end), which was default selene behaviour.
+        Returns
+        -------
+        None
+            Writes the output to file(s) in `output_dir`. Filename will
+            match that specified in the filepath.
 
-            Returns
-            -------
-            None
-                Writes the output to file(s) in `output_dir`. Filename will
-                match that specified in the filepath.
+        """
+        _, filename = os.path.split(input_path)
+        output_prefix = os.path.splitext(os.path.basename(input_path))[0]
 
-            """
-            _, filename = os.path.split(input_path)
-            output_prefix = '.'.join(filename.split('.')[:-1])
+        seq_coords, labels = self._get_sequences_from_bed_file(
+            input_path,
+            strand_index=strand_index,
+            sample_continuous=sample_continuous,
+            output_NAs_to_file="{0}.NA".format(os.path.join(output_dir, output_prefix)),
+            reference_sequence=self.reference_sequence,
+        )
 
-            seq_coords, labels = self._get_sequences_from_bed_file(
-                input_path,
-                strand_index=strand_index,
-                sample_continuous = sample_continuous,
-                output_NAs_to_file="{0}.NA".format(os.path.join(output_dir, output_prefix)),
-                reference_sequence=self.reference_sequence)
-
-            if output_format == "bigWig":
-                constructor_args = []
-                header = self._get_bigWig_header(seq_coords)
-                reporter = WritePredictionsMultiCtBigWigHandler(
-                    self.features,
-                    [1,2,3],
-                    6,
-                    self._cell_types,
-                    self._get_bigWig_header(seq_coords),
-                    os.path.join(output_dir, output_prefix),
-                    self._write_mem_limit
+        if output_format == "bigWig":
+            constructor_args = []
+            header = self._get_bigWig_header(seq_coords)
+            reporter = WritePredictionsMultiCtBigWigHandler(
+                self.features,
+                [1, 2, 3],
+                6,
+                self._cell_types,
+                self._get_bigWig_header(seq_coords),
+                os.path.join(output_dir, output_prefix),
+                self._write_mem_limit,
+            )
+        else:
+            reporter = self._initialize_reporters(
+                ["predictions"],
+                os.path.join(output_dir, output_prefix),
+                output_format,
+                [
+                    "index",
+                    "chrom",
+                    "start",
+                    "end",
+                    "strand",
+                    "contains_unk",
+                    "cell_type",
+                ],
+                output_size=len(labels),
+            )[
+                0
+            ]  # ,
+            # mode="prediction")[0]
+        sequences = None
+        batch_ids = []
+        for i, (label, coords) in enumerate(zip(tqdm(labels), seq_coords)):
+            (
+                encoding,
+                contains_unk,
+            ) = self.reference_sequence.get_encoding_from_coords_check_unk(
+                *coords, pad=True
+            )
+            if sequences is None:
+                sequences = np.zeros((self.batch_size, *encoding.shape))
+            if i and i % self.batch_size == 0:
+                preds, cell_type_updated_batch_ids = self._get_predictions(
+                    sequences, batch_ids
                 )
-            else:
-                reporter = self._initialize_reporters(
-                        ["predictions"],
-                        os.path.join(output_dir, output_prefix),
-                        output_format,
-                        ["index", "chrom", "start", "end", "strand", "contains_unk", "cell_type"],
-                        output_size=len(labels))[0]#,
-                        #mode="prediction")[0]
-            sequences = None
-            batch_ids = []
-            for i, (label, coords) in (enumerate(zip(tqdm(labels), seq_coords))):
-                encoding, contains_unk = self.reference_sequence.get_encoding_from_coords_check_unk(
-                        *coords,
-                        pad=True)
-                if sequences is None:
-                    sequences = np.zeros((self.batch_size, *encoding.shape))
-                if i and i % self.batch_size == 0:
-                    preds, cell_type_updated_batch_ids = self._get_predictions(sequences, batch_ids)
-                    sequences = np.zeros((self.batch_size, *encoding.shape))
-                    reporter.handle_batch_predictions(preds, cell_type_updated_batch_ids)
-                    batch_ids = []
-                batch_ids.append(label+(contains_unk,))
-                sequences[ i % self.batch_size, :, :] = encoding
-                if contains_unk:
-                    warnings.warn(("For region {0}, "
-                                   "reference sequence contains unknown "
-                                   "base(s). --will be marked `True` in the "
-                                   "`contains_unk` column of the .tsv or "
-                                   "row_labels .txt file.").format(label))
-
-            if (batch_ids and i == 0) or i % self.batch_size != 0:
-                sequences = sequences[:i % self.batch_size + 1, :, :]
-                preds, cell_type_updated_batch_ids = self._get_predictions(sequences, batch_ids)
+                sequences = np.zeros((self.batch_size, *encoding.shape))
+                # print ([i[2] for i in cell_type_updated_batch_ids])
                 reporter.handle_batch_predictions(preds, cell_type_updated_batch_ids)
+                batch_ids = []
+            batch_ids.append(label + (contains_unk,))
+            sequences[i % self.batch_size, :, :] = encoding
+            if contains_unk:
+                pass
+                # warnings.warn(("For region {0}, "
+                #               "reference sequence contains unknown "
+                #               "base(s). --will be marked `True` in the "
+                #               "`contains_unk` column of the .tsv or "
+                #               "row_labels .txt file.").format(label))
 
-            reporter.write_to_file()
-            reporter.close_handlers()
+        if (batch_ids and i == 0) or i % self.batch_size != 0:
+            sequences = sequences[: i % self.batch_size + 1, :, :]
+            preds, cell_type_updated_batch_ids = self._get_predictions(
+                sequences, batch_ids
+            )
+            reporter.handle_batch_predictions(preds, cell_type_updated_batch_ids)
 
+        reporter.write_to_file()
+        reporter.close_handlers()
 
-    def get_predictions(self,
-                        input_path,
-                        output_dir=None,
-                        output_format="tsv",
-                        strand_index=None,
-                        sample_continuous=False):
+    def get_predictions(
+        self,
+        input_path,
+        output_dir=None,
+        output_format="tsv",
+        strand_index=None,
+        sample_continuous=False,
+    ):
         """
         Get model predictions for sequences specified as BED file.
 
@@ -591,13 +646,13 @@ class AnalyzeSequences(object):
         """
         os.makedirs(output_dir, exist_ok=True)
         self.get_predictions_for_bed_file(
-                input_path,
-                output_dir,
-                output_format=output_format,
-                strand_index=strand_index,
-                sample_continuous=sample_continuous)
+            input_path,
+            output_dir,
+            output_format=output_format,
+            strand_index=strand_index,
+            sample_continuous=sample_continuous,
+        )
         return None
-
 
     def _pad_or_truncate_sequence(self, sequence):
         if len(sequence) < self.sequence_length:

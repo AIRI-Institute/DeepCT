@@ -8,7 +8,7 @@ model: {
     class: DeepCT,
     class_args: { #TODO - do we need to provide this info to instantianse trained model?
         sequence_length: 1000,
-        n_cell_types: 125,
+        n_cell_types: 631,
         sequence_embedding_length: 256,
         cell_type_embedding_length: 32,
         final_embedding_length: 256,
@@ -18,28 +18,28 @@ model: {
 
 # TODO: some values could be copied automatically from the model class
 analyze_sequences: !obj:src.prediction.predict.AnalyzeSequences {
-    trained_model_path: /home/msindeeva/DeepCT/DeepCT_outputs/encode/ct_v2/dnase/multi_ct/AdamW_COS_LR0001/2021-04-27-13-37-01/best_model.pth.tar,
+    trained_model_path: /home/msindeeva/DeepCT/DeepCT_outputs/boix/ct_v2/dnase/multi_ct/AdamW_COS_LR0001/2021-05-28-12-27-48/best_model.pth.tar,
     sequence_length: 1000,
     features: !obj:selene_sdk.utils.load_features_list {
-        input_path: /mnt/datasets/DeepCT/dataset_data/dnase/target_features.txt
+        input_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/dnase/target_features.txt
     },
     distinct_features: !obj:selene_sdk.utils.load_features_list {
-        input_path: /mnt/datasets/DeepCT/dataset_data/dnase/distinct_features.txt
+        input_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/dnase/distinct_features.txt
     },
     batch_size: 128,
-    device: 'cuda:2',
+    device: 'cuda:3',
     data_parallel: False,
-    n_cell_types: 125,
+    n_cell_types: 631,
     reference_sequence: !obj:selene_sdk.sequences.Genome {
             input_path: /mnt/datasets/DeepCT/male.hg19.fasta
     },
-    write_mem_limit: 75000
+    write_mem_limit: 1000
 }
 
 prediction: {
     input_path: /mnt/home/vsfishman/TheCellState/DeepCT/data/test_data/example_genomic_intervals.bed,
     sample_continuous: True,
-    output_dir: /mnt/home/vsfishman/TheCellState/DeepCT/DeepCT_outputs/encode/ct_v2/dnase/multi_ct/AdamW_COS_LR0001/2021-04-27-13-37-01/prediction/,
+    output_dir: /disk2/vsfishman/DeepCT/DeepCT_outputs/boix/ct_v2/dnase/multi_ct/AdamW_COS_LR0001/2021-04-27-13-37-01/prediction/,
     output_format: bigWig
 }
 
