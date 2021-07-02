@@ -1,4 +1,5 @@
 import os
+import pyBigWig
 
 from src.dataset import EncodeDataset
 
@@ -27,6 +28,20 @@ class TestEncodeDataset:
 
         reference_sequence_path = os.path.join(TEST_DATA_PATH, "mini_male.hg19.fasta")
         target_path = os.path.join(TEST_DATA_PATH, "mini_sorted_data.bed.gz")
+
+        # create a sample bigWig files
+        for feature in ["CTCF","DNAse"]:
+            fname = os.path.join(TEST_DATA_PATH,"testqDataset"+feature)
+            if os.path.isfile(fname):
+                continue
+            bw = pyBigWig.open(fname,"w")
+            bw.addHeader(([("chr1", 1000000), ("chr2", 1500000)]))
+            bw.addEntries(["chr1", "chr1", "chr1"], [0, 100, 125],
+                                                ends=[5, 120, 126],
+                                                values=[0.0, 1.0, 200.0]
+                          )
+            bw.close()
+
 
         # initialize the cell-wise dataset
         self.cellwise_dataset = EncodeDataset(
@@ -58,6 +73,34 @@ class TestEncodeDataset:
             strand="+",
         )
 
+        intervals = [("chr1",0,100),("chr2",50,150)]
+        target_features = ["CTCF", "DNAse"]
+        distinct_features = ["ct1|"+feature+"|None" for feature in target_features]
+        # create bigwig-feature mapping
+        with open(os.path.join(TEST_DATA_PATH, "testqDatasetMapping.tsv"), "w") as f:
+            for feature in target_features:
+                fname = os.path.join(TEST_DATA_PATH, "testqDataset" + feature)
+                f.write("ct1|"+feature+"|None\t"+fname+"\n")
+
+        target_path = os.path.join(TEST_DATA_PATH, "testqDatasetMapping.tsv")
+
+        # initialize the quantitative cell-wise dataset
+        self.cellwise_qdataset = EncodeDataset(
+            reference_sequence_path=reference_sequence_path,
+            target_path=target_path,
+            distinct_features=distinct_features,
+            target_features=target_features,
+            intervals=intervals,
+            cell_wise=True,
+            transform=None,
+            quantitative_features=True,
+            sequence_length=100,
+            center_bin_to_predict=20,
+            feature_thresholds=0.5,
+            strand="+",
+        )
+
+
     def test_sample__cellfree_shape(self):
         sample = self.cellfree_dataset[100]
         assert len(sample[1]) == len(self.cellfree_dataset.distinct_features)
@@ -67,6 +110,10 @@ class TestEncodeDataset:
             100 * len(self.cellfree_dataset.distinct_features) + 1
         ]
         assert sample[2] == 1
+
+    def test_sample__cellwise_qdataset_shape(self):
+        sample = self.cellwise_qdataset[100]
+        assert len(sample[1]) == len(self.cellwise_qdataset.distinct_features)
 
     def test_sample__cellwise_negative(self):
         sample = self.cellwise_dataset[

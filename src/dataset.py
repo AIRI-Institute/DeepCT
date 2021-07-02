@@ -3,7 +3,7 @@ import bisect
 import numpy as np
 import torch
 from selene_sdk.sequences import Genome
-from selene_sdk.targets import GenomicFeatures
+from selene_sdk.targets import GenomicFeatures, qGenomicFeatures
 
 from src.transforms import PermuteSequenceChannels
 
@@ -21,8 +21,13 @@ class EncodeDataset(torch.utils.data.Dataset):
     reference_sequence_path : str
         Path to reference sequence `fasta` file from which to create examples.
     target_path : str
-        Path to tabix-indexed, compressed BED file (`*.bed.gz`) of genomic
+        in case of bed-like qualitative features, it should be
+        path to tabix-indexed, compressed BED file (`*.bed.gz`) of genomic
         coordinates mapped to the genomic features we want to predict.
+        In case of bigWig-like quantitative features, it should be a path
+        to file mapping each feature label to corresponding bigWig file
+    quantitative_features: bool
+        wheather features are quantitative or qualitative
     distinct_features : list(str)
         List of distinct `cell_type|feature_name|info` combinations available,
         e.g. `["K562|ZBTB33|None", "HCF|DNase|None", "HUVEC|DNase|None"]`.
@@ -102,6 +107,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         distinct_features,
         target_features,
         intervals,
+        quantitative_features=False,
         cell_wise=True,
         transform=PermuteSequenceChannels(),
         sequence_length=1000,
@@ -118,7 +124,14 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.target_features = target_features
         self.target_path = target_path
         self.feature_thresholds = feature_thresholds
-        self.target = self._construct_target()
+        if quantitative_features:
+            # for quantitative_features opening feature file and looking for feature costs a lot of time
+            # so we won't keep those celltype-feature combintations where feature in target_features
+            self.distinct_features = [i for i in self.distinct_features \
+                                        if self._parse_distinct_feature(i)[0] in self.target_features]
+            if self.feature_thresholds is not None:
+                print ("Feature thresholds are not implemented for quantitative_features and will be ignored")
+        self.target = self._construct_target(quantitative_features)
 
         if not cell_wise and multi_ct_target:
             raise ValueError("cell_wise=True must be used with multi_ct_target=True")
@@ -347,12 +360,21 @@ class EncodeDataset(torch.utils.data.Dataset):
     def _construct_ref_genome(self):
         return Genome(self.reference_sequence_path)
 
-    def _construct_target(self):
-        return GenomicFeatures(
-            self.target_path,
-            self.distinct_features,
-            feature_thresholds=self.feature_thresholds,
-        )
+    def _construct_target(self, quantitative_features):
+        if quantitative_features:
+            feature_path = dict([line.strip().split() for line in open(self.target_path)])
+            feature_path = [feature_path[feature] for feature in self.distinct_features]
+
+            return qGenomicFeatures(
+                self.distinct_features,
+                feature_path
+            )
+        else:
+            return GenomicFeatures(
+                self.target_path,
+                self.distinct_features,
+                feature_thresholds=self.feature_thresholds,
+            )
 
     def _parse_distinct_feature(self, distinct_feature):
         """
