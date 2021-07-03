@@ -113,7 +113,7 @@ class TestEncodeDataset:
 
     def test_sample__cellwise_qdataset_shape(self):
         sample = self.cellwise_qdataset[100]
-        assert len(sample[1]) == len(self.cellwise_qdataset.distinct_features)
+        assert len(sample[3]) == len(self.cellwise_qdataset.distinct_features)
 
     def test_sample__cellwise_negative(self):
         sample = self.cellwise_dataset[

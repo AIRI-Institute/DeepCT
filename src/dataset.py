@@ -124,6 +124,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.target_features = target_features
         self.target_path = target_path
         self.feature_thresholds = feature_thresholds
+        self.quantitative_features = quantitative_features
         if quantitative_features:
             # for quantitative_features opening feature file and looking for feature costs a lot of time
             # so we won't keep those celltype-feature combintations where feature in target_features
@@ -484,4 +485,4 @@ def encode_worker_init_fn(worker_id):
     # which is not multiprocessing-safe, see:
     # https://github.com/mdshw5/pyfaidx/issues/167#issuecomment-667591513
     dataset.reference_sequence = dataset._construct_ref_genome()
-    dataset.target = dataset._construct_target()
+    dataset.target = dataset._construct_target(dataset.quantitative_features)
