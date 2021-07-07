@@ -6,8 +6,10 @@ from tqdm import tqdm
 
 # maximum size of targets stored in-memory for validation metrics computation,
 # value derived experimentally using data loader of size 2000, batch size 64,
-# 194 cell types, and 201 target features
-MAX_TOTAL_VAL_TARGET_SIZE = 2000 * 64 * 194 * 201
+# 194 cell types, and 201 targets
+# MAX_TOTAL_VAL_TARGET_SIZE = 2000 * 64 * 194 * 201
+# updated with data loader of size 500, batch size 128, 858 cell types, and 40 targets
+MAX_TOTAL_VAL_TARGET_SIZE = 500 * 128 * 858 * 40
 
 
 def expand_dims(x):

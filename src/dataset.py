@@ -123,6 +123,10 @@ class EncodeDataset(torch.utils.data.Dataset):
         if not cell_wise and multi_ct_target:
             raise ValueError("cell_wise=True must be used with multi_ct_target=True")
         self.cell_wise = cell_wise
+        if self.cell_wise:
+            self.n_target_features = len(self.target_features)
+        else:
+            self.n_target_features = len(self.distinct_features)
         self.multi_ct_target = multi_ct_target
         self.transform = transform
 
@@ -137,7 +141,7 @@ class EncodeDataset(torch.utils.data.Dataset):
             self.sequence_length - self.center_bin_to_predict
         ) // 2
 
-        if self.cell_wise or self.multi_ct_target:
+        if self.cell_wise:
             self._cell_types = []
             cell_type_indices_by_feature_index = [
                 [] for i in range(len(self.target_features))
@@ -152,7 +156,6 @@ class EncodeDataset(torch.utils.data.Dataset):
                     self._cell_types.append(cell_type)
 
             self.n_cell_types = len(self._cell_types)
-            self.n_target_features = len(self.target_features)
             self._feature_indices_by_cell_type_index = np.full(
                 (self.n_cell_types, self.n_target_features), _FEATURE_NOT_PRESENT
             )
@@ -201,11 +204,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         retrieved_sample = self._retrieve(chrom, pos, cell_type_idx)
         if self.transform is not None:
             retrieved_sample = self.transform(retrieved_sample)
-        if self.cell_wise:
-            return retrieved_sample
-        retrieved_seq = retrieved_sample[0]
-        retrieved_target = retrieved_sample[2]
-        return retrieved_seq, retrieved_target
+        return retrieved_sample
 
     def _get_chrom_pos_cell_by_idx(self, idx):
         """
@@ -308,7 +307,11 @@ class EncodeDataset(torch.utils.data.Dataset):
         if not self._check_retrieved_sequence(retrieved_seq, chrom, position):
             return None
 
-        return retrieved_seq, cell_type, target, target_mask
+        if self.cell_wise:
+            retrieved_sample = (retrieved_seq, cell_type, target, target_mask)
+        else:
+            retrieved_sample = (retrieved_seq, target)
+        return retrieved_sample
 
     def _check_retrieved_sequence(self, sequence, chrom, position) -> bool:
         """Checks whether retrieved sequence is acceptable.

@@ -67,6 +67,10 @@ class EvaluateModel(object):
         Test data loader.
     target_features : list(str)
         List of features the model predicts.
+    masked_targets : bool
+        Whether the dataset generates targets with a mask of existing targets or not.
+    multi_ct_data : bool
+        Whether the dataset generates targets for several cell types at a time.
     device : torch.device
         Device on which the computation is carried out.
 
@@ -99,9 +103,10 @@ class EvaluateModel(object):
 
         self.criterion = criterion
 
-        trained_model = torch.load(
-            trained_model_path, map_location=lambda storage, location: storage
-        )
+        self.device = torch.device(device)
+        self.data_parallel = data_parallel
+
+        trained_model = torch.load(trained_model_path, map_location=self.device)
         if "state_dict" in trained_model:
             self.model = load_model_from_state_dict(trained_model["state_dict"], model)
         else:
@@ -111,9 +116,6 @@ class EvaluateModel(object):
             self.log_cell_type_embeddings_to_tensorboard()
 
         self.model.eval()
-
-        self.device = torch.device(device)
-        self.data_parallel = data_parallel
 
         if self.data_parallel:
             self.model = nn.DataParallel(model)
@@ -131,6 +133,7 @@ class EvaluateModel(object):
         )
 
         self.masked_targets = self.data_loader.dataset.cell_wise
+        self.multi_ct_data = self.data_loader.dataset.multi_ct_target
 
         self.val_reduction_factor = 1
         val_batch_size = self.data_loader.batch_size
@@ -182,39 +185,53 @@ class EvaluateModel(object):
                 cell_type_batch = batch[1].to(self.device)
                 targets = batch[2].to(self.device)
                 target_mask = batch[3].to(self.device)
+                if self.multi_ct_data:
+                    targets = targets.view(-1, targets.shape[-1])
+                    target_mask = target_mask.view(-1, target_mask.shape[-1])
             else:
                 # retrieved_seq, target
                 sequence_batch = batch[0].to(self.device)
                 targets = batch[1].to(self.device)
 
+            # mask some batch samples to be used for inference
+            if self.multi_ct_data:
+                n_batch_samples = (
+                    sequence_batch.shape[0] * self.data_loader.dataset.n_cell_types
+                )
+            else:
+                n_batch_samples = sequence_batch.shape[0]
+            sample_mask = np.ones(n_batch_samples, dtype=bool)
+            if self.val_reduction_factor > 1:
+                reduced_val_batch_size = n_batch_samples // self.val_reduction_factor
+                sample_idxs = np.random.choice(
+                    n_batch_samples, reduced_val_batch_size, replace=False
+                )
+                sample_mask = ~sample_mask
+                sample_mask[sample_idxs] = True
+                # use sample_mask to drop some samples
+                if not self.multi_ct_data:
+                    sequence_batch = sequence_batch[sample_mask]
+                    targets = targets[sample_mask]
+                    if self.masked_targets:
+                        cell_type_batch = cell_type_batch[sample_mask]
+                        target_mask = target_mask[sample_mask]
+                else:
+                    targets = targets[sample_mask]
+                    target_mask = target_mask[sample_mask]
+
             with torch.no_grad():
                 if self.masked_targets:
-                    outputs = self.model(sequence_batch, cell_type_batch)
+                    if self.multi_ct_data:
+                        outputs = self.model(sequence_batch, sample_mask)
+                    else:
+                        outputs = self.model(sequence_batch, cell_type_batch)
                     self.criterion.weight = target_mask
                 else:
                     outputs = self.model(sequence_batch)
                 loss = self.criterion(outputs, targets)
-                if self.criterion.reduction == "sum":
+                if self.criterion.reduction == "sum" and self.masked_targets:
                     loss = loss / self.criterion.weight.sum()
                 predictions = torch.sigmoid(outputs)
-
-                predictions = predictions.view(-1, predictions.shape[-1])
-                targets = targets.view(-1, targets.shape[-1])
-                if self.masked_targets:
-                    target_mask = target_mask.view(-1, target_mask.shape[-1])
-
-                if self.val_reduction_factor > 1:
-                    reduced_val_batch_size = (
-                        predictions.shape[0] // self.val_reduction_factor
-                    )
-                    reduced_index = np.random.choice(
-                        predictions.shape[0], reduced_val_batch_size
-                    )
-
-                    predictions = predictions[reduced_index]
-                    targets = targets[reduced_index]
-                    if self.masked_targets:
-                        target_mask = target_mask[reduced_index]
 
                 all_predictions.append(predictions.data.cpu().numpy())
                 all_targets.append(targets.data.cpu().numpy())

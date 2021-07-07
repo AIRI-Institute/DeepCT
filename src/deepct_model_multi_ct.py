@@ -125,15 +125,15 @@ class DeepCT(nn.Module):
         writer.close()
     """
 
-    def forward(self, sequence_batch, cell_type_batch):
+    def forward(self, sequence_batch, sample_mask=None):
         """Forward propagation of a batch.
 
         Parameters:
         -----------
         sequence_batch : torch.Tensor
             A batch of encoded sequences.
-        cell_type_batch: torch.Tensor
-            A batch of one-hot cell type encodings.
+        sample_mask: torch.Tensor
+            A mask of samples to use in inference.
 
         """
         batch_size = sequence_batch.size(0)
@@ -150,6 +150,8 @@ class DeepCT(nn.Module):
         sequence_embedding = self.sequence_net(reshaped_sequence_out).repeat_interleave(
             repeats=self._n_cell_types, dim=0
         )
+        if sample_mask is not None:
+            sequence_embedding = sequence_embedding[sample_mask]
 
         # Repeat cell type embeddings to fit sequence embeddings.
         # E.g., with batch size of 3, 2 cell types, and [ct0_emb, ct1_emb] cell type
@@ -158,13 +160,16 @@ class DeepCT(nn.Module):
         cell_type_embeddings = self.cell_type_net(cell_type_one_hots).repeat(
             batch_size, 1
         )
+        if sample_mask is not None:
+            cell_type_embeddings = cell_type_embeddings[sample_mask]
         sequence_and_cell_type_embeddings = torch.cat(
             (sequence_embedding, cell_type_embeddings), 1
         )
 
-        predict = self.classifier(sequence_and_cell_type_embeddings).view(
-            batch_size, self._n_cell_types, -1
-        )
+        predict = self.classifier(sequence_and_cell_type_embeddings)
+        # predict = predict.view(
+        #    batch_size, self._n_cell_types, -1
+        # )
         return predict
 
 
