@@ -4,11 +4,12 @@ for multiple cell type per position computation at once
 with quantitative features (TODO: Add our names).
 """
 import os
+
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.nn import MSELoss
 from torch import mean
+from torch.nn import MSELoss
 from torch.utils.tensorboard import SummaryWriter
 
 
