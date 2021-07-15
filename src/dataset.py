@@ -127,11 +127,16 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.quantitative_features = quantitative_features
         if quantitative_features:
             # for quantitative_features opening feature file and looking for feature costs a lot of time
-            # so we won't keep those celltype-feature combintations where feature in target_features
-            self.distinct_features = [i for i in self.distinct_features \
-                                        if self._parse_distinct_feature(i)[0] in self.target_features]
+            # so we won't keep those celltype-feature combintations where feature is not in target_features
+            self.distinct_features = [
+                i
+                for i in self.distinct_features
+                if self._parse_distinct_feature(i)[0] in self.target_features
+            ]
             if self.feature_thresholds is not None:
-                print ("Feature thresholds are not implemented for quantitative_features and will be ignored")
+                print(
+                    "Feature thresholds are not implemented for quantitative_features and will be ignored"
+                )
         self.target = self._construct_target(quantitative_features)
 
         if not cell_wise and multi_ct_target:
@@ -363,13 +368,12 @@ class EncodeDataset(torch.utils.data.Dataset):
 
     def _construct_target(self, quantitative_features):
         if quantitative_features:
-            feature_path = dict([line.strip().split() for line in open(self.target_path)])
+            feature_path = dict(
+                [line.strip().split() for line in open(self.target_path)]
+            )
             feature_path = [feature_path[feature] for feature in self.distinct_features]
 
-            return qGenomicFeatures(
-                self.distinct_features,
-                feature_path
-            )
+            return qGenomicFeatures(self.distinct_features, feature_path)
         else:
             return GenomicFeatures(
                 self.target_path,

@@ -198,6 +198,7 @@ def get_optimizer(lr):
     # Option 2:
     return (torch.optim.Adam, {"lr": lr, "weight_decay": 1e-6})
 
+
 class WeightedMSELoss(MSELoss):
     r"""Creates a criterion that measures the mean squared error between
     `n` elements in the input `x` and target `y` weighted by weight `c`.
@@ -224,27 +225,29 @@ class WeightedMSELoss(MSELoss):
         >>> output = loss(input, target)
         >>> output.backward()
     """
+
     def __init__(self, pos_weight, device="cpu"):
-        super(WeightedMSELoss, self).__init__(size_average=None,
-                                              reduce=None,
-                                              reduction='elementwise_mean'
-                                              )
+        super(WeightedMSELoss, self).__init__(
+            size_average=None, reduce=None, reduction="elementwise_mean"
+        )
         # construct weights tensor
         try:
             self.weights = torch.tensor(pos_weight).to(device)
         except TypeError:
             if not os.path.isfile(pos_weight):
-                raise ValueError("Provided pos_weight could not be neither "+\
-                                 "converted to tensor nor opened as file:\n"+\
-                                 str(pos_weight)
-                                )
+                raise ValueError(
+                    "Provided pos_weight could not be neither "
+                    + "converted to tensor nor opened as file:\n"
+                    + str(pos_weight)
+                )
             with open(pos_weight) as f:
                 pos_weight = list(map(float, f.readlines()))
                 self.weights = torch.tensor(pos_weight).to(device)
 
-        self.F = lambda a, b, c: ((a - b) ** 2)*c
+        self.F = lambda a, b, c: ((a - b) ** 2) * c
 
     def forward(self, input, target):
-        return  torch.mean(self.F(input, target, self.weights))
+        return torch.mean(self.F(input, target, self.weights))
+
 
 import sklearn.metrics

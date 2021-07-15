@@ -31,18 +31,19 @@ class TestEncodeDataset:
         target_path = os.path.join(TEST_DATA_PATH, "mini_sorted_data.bed.gz")
 
         # create a sample bigWig files
-        for feature in ["CTCF","DNAse"]:
-            fname = os.path.join(TEST_DATA_PATH,"testqDataset"+feature)
+        for feature in ["CTCF", "DNAse"]:
+            fname = os.path.join(TEST_DATA_PATH, "testqDataset" + feature)
             if os.path.isfile(fname):
                 continue
-            bw = pyBigWig.open(fname,"w")
+            bw = pyBigWig.open(fname, "w")
             bw.addHeader(([("chr1", 1000000), ("chr2", 1500000)]))
-            bw.addEntries(["chr1", "chr1", "chr1"], [0, 100, 125],
-                                                ends=[5, 120, 126],
-                                                values=[0.0, 1.0, 200.0]
-                          )
+            bw.addEntries(
+                ["chr1", "chr1", "chr1"],
+                [0, 100, 125],
+                ends=[5, 120, 126],
+                values=[0.0, 1.0, 200.0],
+            )
             bw.close()
-
 
         # initialize the cell-wise dataset
         self.cellwise_dataset = EncodeDataset(
@@ -74,14 +75,14 @@ class TestEncodeDataset:
             strand="+",
         )
 
-        intervals = [("chr1",0,100),("chr2",50,150)]
+        intervals = [("chr1", 0, 100), ("chr2", 50, 150)]
         target_features = ["CTCF", "DNAse"]
-        distinct_features = ["ct1|"+feature+"|None" for feature in target_features]
+        distinct_features = ["ct1|" + feature + "|None" for feature in target_features]
         # create bigwig-feature mapping
         with open(os.path.join(TEST_DATA_PATH, "testqDatasetMapping.tsv"), "w") as f:
             for feature in target_features:
                 fname = os.path.join(TEST_DATA_PATH, "testqDataset" + feature)
-                f.write("ct1|"+feature+"|None\t"+fname+"\n")
+                f.write("ct1|" + feature + "|None\t" + fname + "\n")
 
         target_path = os.path.join(TEST_DATA_PATH, "testqDatasetMapping.tsv")
 
@@ -100,7 +101,6 @@ class TestEncodeDataset:
             feature_thresholds=0.5,
             strand="+",
         )
-
 
     def test_sample__cellfree_shape(self):
         sample = self.cellfree_dataset[100]
