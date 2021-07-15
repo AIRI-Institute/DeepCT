@@ -1,7 +1,8 @@
-import torch
 import numpy as np
+import torch
 
-from src.deepct_model_multi_ct_q import qDeepCT, WeightedMSELoss
+from src.deepct_model_multi_ct_q import WeightedMSELoss, qDeepCT
+
 
 class TestqDeepCT:
 
