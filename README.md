@@ -18,10 +18,10 @@ $PYTHONPATH=$PYTHONPATH:/home/$USER/selene
 
 4. Clone this repo
 
-5. Run DeepCT on selected GPU:
+5. Run DeepCT according to config file:
 ```zsh
 cd ~/DeepCT
-CUDA_VISIBLE_DEVICES=0 python -u ~/selene/selene_sdk/cli.py model_configs/dnase_only_train.yml
+python -u ~/selene/selene_sdk/cli.py model_configs/biox_all_multi_ct_train.yml
 ```
 
 
@@ -32,9 +32,9 @@ CUDA_VISIBLE_DEVICES=0 python -u ~/selene/selene_sdk/cli.py model_configs/dnase_
 CUDA_VISIBLE_DEVICES=0,1,2,3 python -u ~/selene/selene_sdk/cli.py model_configs/deeper_deep_sea_benchmark.yml
 ```
 
-### DeepCT (trained on DNase-only)
-1. Update [model_configs/dnase_only_eval.yml](model_configs/dnase_only_eval.yml) with model's path and config;
+### DeepCT
+1. Update [model_configs/biox_all_multi_ct_eval.yml](model_configs/biox_all_multi_ct_eval.yml) with model's path and config;
 2. Run
 ```zsh
-CUDA_VISIBLE_DEVICES=0,1,2,3 python -u ~/selene/selene_sdk/cli.py model_configs/dnase_only_eval.yml
+python -u ~/selene/selene_sdk/cli.py model_configs/biox_all_multi_ct_eval.yml
 ```
