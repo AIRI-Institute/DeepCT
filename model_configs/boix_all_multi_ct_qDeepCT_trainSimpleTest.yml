@@ -77,7 +77,8 @@ train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
 #        f1: !import src.metrics.f1_score,
 #        precision: !import src.metrics.precision_score,
 #        recall: !import src.metrics.recall_score,
-        roc_auc: !import sklearn.metrics.mean_squared_error,
+#        roc_auc: !import sklearn.metrics.roc_auc_score,
+        mse: !import sklearn.metrics.mean_squared_error
     },
 }
 output_dir: DeepCT_outputs/tests/boix/ct_v2/q/DNAse_all_ct/WeightedMSELoss/
