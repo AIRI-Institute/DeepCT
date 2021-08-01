@@ -12,7 +12,7 @@ model: {
     class: qDeepCT,
     class_args: {
         sequence_length: 1000,
-        n_cell_types: 631,
+        n_cell_types: 1,
         sequence_embedding_length: 256,
         cell_type_embedding_length: 32,
         final_embedding_length: 256,
@@ -28,18 +28,21 @@ criterion: !obj:src.criterion.WeightedMSELoss {
 dataset: {
     path: src/dataset.py,
     class: EncodeDataset,
-    sampler_class: LargeRandomSampler,
+    train_sampler_class: LargeRandomSampler,
+    train_sample_args: {replacement: False},
+    validation_sampler_class: SubsetRandomSampler,
+    validation_sampler_args: {num_samples: 6400},
 
-    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/q_features_DNAse/distinct_features.txt,
-    target_features_path: /mnt/datasets/DeepCT/dataset_data/q_features_DNAse/target_features.txt,
-    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/dnase/target_intervals.bed,
+    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/all_features_q_test/distinct_features.txt,
+    target_features_path: /mnt/datasets/DeepCT/dataset_data/all_features_q_test/target_features.txt,
+    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/all_features_q_test/target_intervals.bed,
     quantitative_features: True,
     test_holdout: [chr8, chr9],
     validation_holdout: [chr6, chr7],
 
     dataset_args: {
         reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
-        target_path: /mnt/datasets/DeepCT/dataset_data/q_features_DNAse/features2files_mapping.txt,
+        target_path: /mnt/datasets/DeepCT/dataset_data/all_features_q_test/testqDatasetMapping.tsv,
         cell_wise: True,
         multi_ct_target: True,
         sequence_length: 1000,
@@ -74,10 +77,15 @@ train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
 #        f1: !import src.metrics.f1_score,
 #        precision: !import src.metrics.precision_score,
 #        recall: !import src.metrics.recall_score,
-        roc_auc: !import sklearn.metrics.mean_squared_error,
+#        roc_auc: !import sklearn.metrics.roc_auc_score,
+        mse: !import sklearn.metrics.mean_squared_error
     },
 }
+<<<<<<< HEAD
 output_dir: DeepCT_outputs/tests/boix/ct_v2/q/DNAse_all_ct/WeightedMSELoss/
+=======
+output_dir: DeepCT_outputs/code_tests/boix/ct_v2/all/multi_ct/q/WeightedMSELoss/
+>>>>>>> Add new subsampler sampler to speed up validation metrix computation
 
 random_seed: 1447
 create_subdirectory: True
