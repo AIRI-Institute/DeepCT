@@ -48,14 +48,14 @@ class RandomReverseStrand(torch.nn.Module):
 
 class MaskFeatures(torch.nn.Module):
     """
-    Masks features given by `feature_indices`.
+    Masks features given by `feature_indices_mask`.
 
     Sets sample mask of features at given indices to `False` so that
     the loss sample weights set by this mask become 0's
 
     Parameters
     ----------
-    feature_indices:  np.ndarray
+    feature_indices_mask:  np.ndarray
         Indices of features to be masked out
     """
 
@@ -66,4 +66,31 @@ class MaskFeatures(torch.nn.Module):
     def forward(self, sample):
         mask = sample[3]
         mask[..., self.idx_to_mask] = False
+        return (*sample[:3], mask)
+
+
+class MaskTracks(torch.nn.Module):
+    """
+    Masks tracks given by `track_mask`.
+
+    Sets sample mask of given tracks to `False` so that
+    the loss sample weights set by this mask become 0's
+
+    Parameters
+    ----------
+    track_mask:  np.ndarray
+        Mask of tracks to apply.
+    """
+
+    def __init__(self, track_mask, reverse_mask=False):
+        super().__init__()
+        self.reverse_mask = reverse_mask
+        if self.reverse_mask:
+            self.track_mask = ~track_mask
+        else:
+            self.track_mask = track_mask
+
+    def forward(self, sample):
+        mask = sample[3]
+        mask[self.track_mask] = False
         return (*sample[:3], mask)
