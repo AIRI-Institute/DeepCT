@@ -13,9 +13,18 @@ def _to_binary(x: np.ndarray, threshold=0.5) -> np.ndarray:
 
 
 def binary_inputs(score_func):
+    """Wrapper function for input binarization using specified threshold(s)"""
+
     def binary_wrapper(y_true, y_pred, threshold=0.5, **kwargs):
-        binary_y_true = _to_binary(y_true, threshold)
-        binary_y_pred = _to_binary(y_pred, threshold)
+        if isinstance(threshold, float):
+            binary_y_true = _to_binary(y_true, threshold)
+            binary_y_pred = _to_binary(y_pred, threshold)
+        else:
+            mask = np.logical_or(y_pred > threshold[1], y_pred < threshold[0])
+            binarization_thresh = (threshold[0] + threshold[1]) / 2
+            y_pred = _to_binary(y_pred, binarization_thresh)
+            binary_y_true = y_true[mask]
+            binary_y_pred = y_pred[mask]
         return score_func(binary_y_true, binary_y_pred, **kwargs)
 
     return binary_wrapper
