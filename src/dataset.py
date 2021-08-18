@@ -27,7 +27,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         In case of bigWig-like quantitative features, it should be a path
         to file mapping each feature label to corresponding bigWig file
     quantitative_features: bool
-        wheather features are quantitative or qualitative
+        whether features are quantitative or qualitative
     distinct_features : list(str)
         List of distinct `cell_type|feature_name|info` combinations available,
         e.g. `["K562|ZBTB33|None", "HCF|DNase|None", "HUVEC|DNase|None"]`.
@@ -489,4 +489,7 @@ def encode_worker_init_fn(worker_id):
     # which is not multiprocessing-safe, see:
     # https://github.com/mdshw5/pyfaidx/issues/167#issuecomment-667591513
     dataset.reference_sequence = dataset._construct_ref_genome()
+    # and similarly for targets (as they use bigWig file handlers)
+    # which are not multiprocessing-safe, see
+    # see https://github.com/deeptools/pyBigWig/issues/74#issuecomment-439520821
     dataset.target = dataset._construct_target(dataset.quantitative_features)

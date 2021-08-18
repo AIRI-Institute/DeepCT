@@ -19,7 +19,7 @@ model: {
         n_genomic_features: 1,
     }
 }
-criterion: !obj:src.deepct_model_multi_ct_q.WeightedMSELoss {
+criterion: !obj:src.criterion.WeightedMSELoss {
     pos_weight: '/mnt/datasets/DeepCT/dataset_data/q_features_DNAse/pos_weights.txt',
     device: &device 'cuda:3'
 }
