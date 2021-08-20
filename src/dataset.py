@@ -369,7 +369,7 @@ class EncodeDataset(torch.utils.data.Dataset):
     def _construct_target(self, quantitative_features):
         if quantitative_features:
             feature_path = dict(
-                [line.strip().split() for line in open(self.target_path)]
+                [line.strip().split("\t") for line in open(self.target_path)]
             )
             feature_path = [feature_path[feature] for feature in self.distinct_features]
 

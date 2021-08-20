@@ -1,8 +1,9 @@
 import numpy as np
 import torch
 
-from src.deepct_model_multi_ct_q import qDeepCT
 from src.criterion import WeightedMSELoss
+from src.deepct_model_multi_ct_q import qDeepCT
+
 
 class TestqDeepCT:
     def test_init(self):
