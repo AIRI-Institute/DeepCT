@@ -81,11 +81,7 @@ train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
         mse: !import sklearn.metrics.mean_squared_error
     },
 }
-<<<<<<< HEAD
 output_dir: DeepCT_outputs/tests/boix/ct_v2/q/DNAse_all_ct/WeightedMSELoss/
-=======
-output_dir: DeepCT_outputs/code_tests/boix/ct_v2/all/multi_ct/q/WeightedMSELoss/
->>>>>>> Add new subsampler sampler to speed up validation metrix computation
 
 random_seed: 1447
 create_subdirectory: True
