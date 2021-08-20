@@ -104,7 +104,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         self,
         reference_sequence_path,
         target_path,
-        distinct_features,
+        distinct_features,  # TODO: rename as "tracks"
         target_features,
         intervals,
         quantitative_features=False,

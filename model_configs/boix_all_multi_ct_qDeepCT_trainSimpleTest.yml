@@ -31,12 +31,11 @@ dataset: {
     train_sampler_class: LargeRandomSampler,
     train_sample_args: {replacement: False},
     validation_sampler_class: SubsetRandomSampler,
-    validation_sampler_args: {num_samples: 6400},
+    validation_sampler_args: {num_samples: 128},
 
     distinct_features_path: /mnt/datasets/DeepCT/dataset_data/all_features_q_test/distinct_features.txt,
     target_features_path: /mnt/datasets/DeepCT/dataset_data/all_features_q_test/target_features.txt,
     sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/all_features_q_test/target_intervals.bed,
-    quantitative_features: True,
     test_holdout: [chr8, chr9],
     validation_holdout: [chr6, chr7],
 
@@ -49,6 +48,7 @@ dataset: {
         center_bin_to_predict: 200,
         feature_thresholds: 0.5,
         position_skip: 120,
+        quantitative_features: True,
     },
     loader_args: {
         batch_size: 64,
@@ -71,14 +71,16 @@ train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
     device: 'cpu',
     data_parallel: False,
     logging_verbosity: 2,
+    prediction_transform: !obj:src.transforms.quantitative2sigmoid {threashold: 4.9},
+    target_transform: !obj:src.transforms.quantitative2qualitative {threashold: 4.9},
     metrics: {
- #       accuracy: !import src.metrics.accuracy_score,
-#        average_precision: !import sklearn.metrics.average_precision_score,
+        accuracy: !import src.metrics.accuracy_score,
+        average_precision: !import sklearn.metrics.average_precision_score,
 #        f1: !import src.metrics.f1_score,
 #        precision: !import src.metrics.precision_score,
 #        recall: !import src.metrics.recall_score,
-#        roc_auc: !import sklearn.metrics.roc_auc_score,
-        mse: !import sklearn.metrics.mean_squared_error
+        roc_auc: !import sklearn.metrics.roc_auc_score,
+#        mse: !import sklearn.metrics.mean_squared_error
     },
 }
 output_dir: DeepCT_outputs/tests/boix/ct_v2/q/DNAse_all_ct/WeightedMSELoss/

@@ -94,3 +94,45 @@ class MaskTracks(torch.nn.Module):
         mask = sample[3]
         mask[self.track_mask] = False
         return (*sample[:3], mask)
+
+
+class quantitative2sigmoid(torch.nn.Module):
+    """
+    Maps quantitative features to the interval -1...1 using sigmoid function
+
+    Parameters
+    ----------
+    input:  np.ndarray
+        features to be converted.
+
+    threashold:  float
+        threashold substracted from feature values before applying sigmoid function.
+    """
+
+    def __init__(self, threashold=4.9):
+        super().__init__()
+        self.threashold = threashold
+
+    def forward(self, input):
+        return torch.sigmoid(input - self.threashold)
+
+
+class quantitative2qualitative(torch.nn.Module):
+    """
+    Maps quantitative features to the interval -1...1 using sigmoid function
+
+    Parameters
+    ----------
+    input:  np.ndarray
+        features to be converted.
+
+    threashold:  float
+        threashold substracted from feature values before applying sigmoid function.
+    """
+
+    def __init__(self, threashold=4.9):
+        super().__init__()
+        self.threashold = threashold
+
+    def forward(self, input):
+        return input > self.threashold
