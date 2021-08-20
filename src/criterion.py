@@ -1,5 +1,6 @@
-import torch
 import os
+
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import MSELoss
@@ -49,6 +50,7 @@ class FocalLoss(nn.Module):
         else:
             return F_loss
 
+
 class WeightedMSELoss(MSELoss):
     r"""Creates a criterion that measures the mean squared error between
     `n` elements in the input `x` and target `y` weighted by weight `c`.
@@ -65,8 +67,6 @@ class WeightedMSELoss(MSELoss):
     pos_weight: str or array(float)
         either vector of weights or path to file where i-th line
         contains value of i-th element of weights vector
-    device: device to store weights tensor (str)
-        i.e. 'cpu', 'cuda:0'
     Examples::
 
         >>> loss = nn.MSELoss(pos_weight=[1,2,3,4,5])
@@ -76,13 +76,13 @@ class WeightedMSELoss(MSELoss):
         >>> output.backward()
     """
 
-    def __init__(self, pos_weight, device="cpu"):
+    def __init__(self, pos_weight):
         super(WeightedMSELoss, self).__init__(
             size_average=None, reduce=None, reduction="elementwise_mean"
         )
         # construct weights tensor
         try:
-            self.weights = torch.tensor(pos_weight).to(device)
+            weights = torch.tensor(pos_weight)
         except TypeError:
             if not os.path.isfile(pos_weight):
                 raise ValueError(
@@ -92,7 +92,8 @@ class WeightedMSELoss(MSELoss):
                 )
             with open(pos_weight) as f:
                 pos_weight = list(map(float, f.readlines()))
-                self.weights = torch.tensor(pos_weight).to(device)
+                weights = torch.tensor(pos_weight)
+        self.register_buffer("weights", weights)
 
         self.F = lambda a, b, c: ((a - b) ** 2) * c
 

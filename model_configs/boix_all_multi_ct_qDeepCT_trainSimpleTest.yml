@@ -20,8 +20,9 @@ model: {
     }
 }
 criterion: !obj:src.criterion.WeightedMSELoss {
-    pos_weight: '/mnt/datasets/DeepCT/dataset_data/q_features_DNAse/pos_weights.txt',
-    device: &device 'cuda:3'
+    pos_weight: !obj:numpy.genfromtxt {
+        fname: '/mnt/datasets/DeepCT/dataset_data/q_features_DNAse/pos_weights.txt'
+        }
 }
 
 dataset: {
@@ -64,7 +65,7 @@ train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
     report_stats_every_n_steps: 2000,
     save_checkpoint_every_n_steps: 2000,
     report_gt_feature_n_positives: 10,
-    device: *device,
+    device: 'cpu',
     data_parallel: False,
     logging_verbosity: 2,
     metrics: {
@@ -76,7 +77,7 @@ train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
         roc_auc: !import sklearn.metrics.mean_squared_error,
     },
 }
-output_dir: DeepCT_outputs/boix/ct_v2/all/multi_ct/q/DNAse_all_ct/WeightedMSELoss/
+output_dir: DeepCT_outputs/tests/boix/ct_v2/q/DNAse_all_ct/WeightedMSELoss/
 
 random_seed: 1447
 create_subdirectory: True
