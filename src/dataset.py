@@ -104,7 +104,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         self,
         reference_sequence_path,
         target_path,
-        distinct_features,  # TODO: rename as "tracks"
+        distinct_features,
         target_features,
         intervals,
         quantitative_features=False,
@@ -116,6 +116,8 @@ class EncodeDataset(torch.utils.data.Dataset):
         strand="+",
         multi_ct_target=False,
         position_skip=1,
+        target_class=GenomicFeatures,
+        target_init_kwargs=None,
     ):
         self.reference_sequence_path = reference_sequence_path
         self.reference_sequence = self._construct_ref_genome()
@@ -137,7 +139,12 @@ class EncodeDataset(torch.utils.data.Dataset):
                 print(
                     "Feature thresholds are not implemented for quantitative_features and will be ignored"
                 )
-        self.target = self._construct_target(quantitative_features)
+            self.target = self._construct_target(quantitative_features)
+        else:
+            self.target_class = target_class
+            target_init_kwargs["features"] = self.distinct_features
+            self.target_init_kwargs = target_init_kwargs
+            self.target = self._construct_target()
 
         if not cell_wise and multi_ct_target:
             raise ValueError("cell_wise=True must be used with multi_ct_target=True")
@@ -301,7 +308,7 @@ class EncodeDataset(torch.utils.data.Dataset):
                     ct_target_idx = self._feature_indices_by_cell_type_index[
                         cell_type_idx
                     ]
-                    ct_target = targets[ct_target_idx].astype(np.float32)
+                    ct_target = targets[..., ct_target_idx].astype(np.float32)
                     target.append(ct_target)
                 target = np.array(target).astype(np.float32)
                 target_mask = self.target_mask
@@ -375,11 +382,7 @@ class EncodeDataset(torch.utils.data.Dataset):
 
             return qGenomicFeatures(self.distinct_features, feature_path)
         else:
-            return GenomicFeatures(
-                self.target_path,
-                self.distinct_features,
-                feature_thresholds=self.feature_thresholds,
-            )
+            return self.target_class(**self.target_init_kwargs)
 
     def _parse_distinct_feature(self, distinct_feature):
         """

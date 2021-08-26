@@ -224,6 +224,8 @@ class TrainEncodeDatasetModel(object):
         self.n_epochs = n_epochs
         self.nth_step_report_stats = report_stats_every_n_steps
         self.nth_step_save_checkpoint = None
+        if log_embeddings_every_n_steps == "None":
+            log_embeddings_every_n_steps = None
         self.nth_step_log_embeddings = log_embeddings_every_n_steps
 
         if not save_checkpoint_every_n_steps:
@@ -297,16 +299,18 @@ class TrainEncodeDatasetModel(object):
                 checkpoint["state_dict"], self.model
             )
 
-            self._start_step = checkpoint["step"]
-            # if self._start_step >= self.n_epochs:
-            #    self.n_epochs += self._start_step
+            if "step" in checkpoint:
+                self._start_step = checkpoint["step"]
 
-            self._min_loss = checkpoint["min_loss"]
-            self.optimizer.load_state_dict(checkpoint["optimizer"])
-            for state in self.optimizer.state.values():
-                for k, v in state.items():
-                    if isinstance(v, torch.Tensor):
-                        state[k] = v.to(self.device)
+            if "min_loss" in checkpoint:
+                self._min_loss = checkpoint["min_loss"]
+
+            if "optimizer" in checkpoint:
+                self.optimizer.load_state_dict(checkpoint["optimizer"])
+                for state in self.optimizer.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor):
+                            state[k] = v.to(self.device)
 
             logger.info(
                 ("Resuming from checkpoint: step {0}, min loss {1}").format(
