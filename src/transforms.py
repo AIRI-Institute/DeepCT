@@ -180,16 +180,17 @@ class quantitative2qualitative(torch.nn.Module):
     def forward(self, input):
         return input > self.threashold
 
+
 class MeanAndDeviation2AbsolutePredication(torch.nn.Module):
     """
     Convert targets from mean_positional_value + cell-type specific deviations
-    to the form absolute cell-type specific value  
+    to the form absolute cell-type specific value
 
     Note that this will reshape output from
     [batch_size,n_cell_types+1,n_features]
     to
     [batch_size,n_cell_types,n_features]
-    
+
     Parameters
     ----------
     input:  np.ndarray
@@ -200,6 +201,6 @@ class MeanAndDeviation2AbsolutePredication(torch.nn.Module):
         super().__init__()
 
     def forward(self, input):
-        means = input[:,-1:,:]
-        deviations = input[:,:-1,:]
+        means = input[:, -1:, :]
+        deviations = input[:, :-1, :]
         return deviations * means

@@ -76,7 +76,6 @@ class qDeepCT(nn.Module):
             )
             - reduce_by
         )
-        
 
         self.sequence_net = nn.Sequential(
             nn.Linear(960 * self._n_channels, sequence_embedding_length),
@@ -135,9 +134,6 @@ class qDeepCT(nn.Module):
             # sigmoid turned off for loss numerical stability
             # nn.Sigmoid(),
         )
-
-
-
 
     def get_cell_type_embeddings(self):
         """Retrieve cell type embeddings learned by the model."""
@@ -199,14 +195,16 @@ class qDeepCT(nn.Module):
         )
 
         # view mean_positional_prediction to shape it as [batch_size, 1, n_genomic_features]
-        mean_positional_prediction = self.seq_regressor(sequence_embedding).view(batch_size, 1, 
-                                                                    self.n_genomic_features)
-        # view ct_deviations_prediction to shape it as [batch_size, _n_cell_types, n_genomic_features]        
-        ct_deviations_prediction = self.ct_regressor(sequence_and_cell_type_embeddings).view(
-            batch_size, self._n_cell_types, -1
+        mean_positional_prediction = self.seq_regressor(sequence_embedding).view(
+            batch_size, 1, self.n_genomic_features
         )
-        predict = torch.cat((ct_deviations_prediction,mean_positional_prediction),1)
+        # view ct_deviations_prediction to shape it as [batch_size, _n_cell_types, n_genomic_features]
+        ct_deviations_prediction = self.ct_regressor(
+            sequence_and_cell_type_embeddings
+        ).view(batch_size, self._n_cell_types, -1)
+        predict = torch.cat((ct_deviations_prediction, mean_positional_prediction), 1)
         return predict
+
 
 def get_optimizer(lr):
     """
