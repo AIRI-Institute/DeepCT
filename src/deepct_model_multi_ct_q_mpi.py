@@ -206,4 +206,17 @@ class qDeepCT(nn.Module):
             batch_size, self._n_cell_types, -1
         )
         predict = torch.cat((ct_deviations_prediction,mean_positional_prediction),1)
-        return (mean_positional_prediction,ct_deviations_prediction)
+        return predict
+
+def get_optimizer(lr):
+    """
+    The optimizer and the parameters with which to initialize the optimizer.
+    At a later time, we initialize the optimizer by also passing in the model
+    parameters (`model.parameters()`). We cannot initialize the optimizer
+    until the model has been initialized.
+    """
+    # Option 1:
+    # return (torch.optim.SGD, {"lr": lr, "weight_decay": 1e-6, "momentum": 0.9})
+
+    # Option 2:
+    return (torch.optim.Adam, {"lr": lr, "weight_decay": 1e-6})
