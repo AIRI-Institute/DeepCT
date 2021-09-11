@@ -133,7 +133,7 @@ class TestWeightedMSELossWithMPI:
                 for feature in range(self.n_features):
                     for cell_type in range(self.n_cell_types):
                         deviations[cell_type, feature] = (
-                            deviations[cell_type, feature] / means[feature]
+                            deviations[cell_type, feature] - means[feature] 
                         )
                 predicted_mean, predicted_deviation = (
                     input[batch_item, -1, :],

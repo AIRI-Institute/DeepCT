@@ -153,7 +153,7 @@ class WeightedMSELossWithMPI(WeightedMSELoss):
         ) / torch.sum(self.weight, 1, keepdim=True)
         # _mean_feature_value expected to have shape ([batch_size, 1, n_features])
         # then it could be broadcasted to the shape of input repeating values across dim 1
-        _deviation = target / _mean_feature_value
+        _deviation = target - _mean_feature_value
         _predicted_mean, _predicted_deviation = input[:, -1:, :], input[:, :-1, :]
         _MSE_mean = torch.mean(self.F(_mean_feature_value, _predicted_mean))
         _MSE_dev = torch.sum(

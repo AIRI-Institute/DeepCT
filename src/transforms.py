@@ -183,8 +183,9 @@ class quantitative2qualitative(torch.nn.Module):
 
 class MeanAndDeviation2AbsolutePredication(torch.nn.Module):
     """
-    Convert targets from mean_positional_value + cell-type specific deviations
-    to the form absolute cell-type specific value
+    Convert targets from mean_positional_value and cell-type specific deviations
+    to the form absolute cell-type specific value, i.e
+    result = mean_positional_value + cell-type specific deviations
 
     Note that this will reshape output from
     [batch_size,n_cell_types+1,n_features]
@@ -195,12 +196,18 @@ class MeanAndDeviation2AbsolutePredication(torch.nn.Module):
     ----------
     input:  np.ndarray
         predictions to be converted.
+    mean_scaling: float
+        multiply mean by mean_scaling value (default = 1)
+    deviation_scaling: float
+        multiply deviation by mean_deviation value (default = 1)
     """
 
-    def __init__(self):
+    def __init__(self, mean_scaling=1, deviation_scaling=1):
         super().__init__()
+        self._mean_scaling = mean_scaling
+        self._deviation_scaling = deviation_scaling
 
     def forward(self, input):
-        means = input[:, -1:, :]
-        deviations = input[:, :-1, :]
-        return deviations * means
+        means = input[:, -1:, :] * self._mean_scaling
+        deviations = input[:, :-1, :] * self._deviation_scaling
+        return means + deviations
