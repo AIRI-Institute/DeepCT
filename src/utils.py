@@ -10,6 +10,16 @@ from tqdm import tqdm
 MAX_TOTAL_VAL_TARGET_SIZE = 2000 * 64 * 194 * 201
 
 
+def interval_from_line(bed_line, pad_left=0, pad_right=0, chrom_counts=None):
+    chrom, start, end = bed_line.rstrip().split('\t')[:3]
+    start = max(0, int(start) - pad_left)
+    if pad_right:
+        end = min(int(end) + pad_right, chrom_counts[chrom])
+    else:
+        end = int(end)
+    return chrom, start, end
+    
+
 def expand_dims(x):
     if len(x.shape) == 1:
         x = np.expand_dims(x, axis=1)

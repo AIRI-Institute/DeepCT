@@ -4,7 +4,7 @@ lr: 0.0001
 lr_scheduler: {
     class: !import torch.optim.lr_scheduler.CosineAnnealingLR,
     class_args: {
-        T_max: 630250,
+        T_max: 1431450,
     }
 }
 model: {
@@ -12,11 +12,11 @@ model: {
     class: DeepCT,
     class_args: {
         sequence_length: 1000,
-        n_cell_types: 858,
+        n_cell_types: 631,
         sequence_embedding_length: 256,
         cell_type_embedding_length: 32,
         final_embedding_length: 256,
-        n_genomic_features: 40,
+        n_genomic_features: 1,
     }
 }
 criterion: !obj:torch.nn.BCEWithLogitsLoss {
@@ -26,19 +26,16 @@ dataset: {
     path: src/dataset.py,
     class: EncodeDataset,
     sampler_class: LargeRandomSampler,
-    train_sample_args: {replacement: False},
-    validation_sampler_class: SubsetRandomSampler,
-    validation_sampler_args: {num_samples: 6400},
 
-    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/distinct_features.txt,
-    target_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/target_features.txt,
-    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/target_intervals.bed,
+    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/dnase/distinct_features.txt,
+    target_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/dnase/target_features.txt,
+    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/dnase/target_intervals.bed,
     test_holdout: [chr8, chr9],
     validation_holdout: [chr6, chr7],
-
+    
     dataset_args: {
         reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
-        target_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/sorted_data.bed.gz,
+        target_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/dnase/sorted_data.bed.gz,
         cell_wise: True,
         multi_ct_target: True,
         sequence_length: 1000,
@@ -55,16 +52,17 @@ dataset: {
             !obj:src.transforms.PermuteSequenceChannels {},
             !obj:src.transforms.RandomReverseStrand {
                 p: 0.5,
-            },
+            }
         ],
     }
 }
 train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
     n_epochs: 10,
-    report_stats_every_n_steps: 1000,
+    report_stats_every_n_steps: 8000,
     save_checkpoint_every_n_steps: 2000,
+    log_embeddings_every_n_steps: 8000,
     report_gt_feature_n_positives: 10,
-    device: 'cuda:2',
+    device: 'cuda:3',
     data_parallel: False,
     logging_verbosity: 2,
     metrics: {
@@ -74,13 +72,10 @@ train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
 #        precision: !import src.metrics.precision_score,
 #        recall: !import src.metrics.recall_score,
 #        roc_auc: !import sklearn.metrics.roc_auc_score,
-#        jaccard@3: !obj:src.metrics.threshold_wrapper {
-#            score_func: !import src.metrics.jaccard_score,
-#            threshold: 0.3,
-#        },
     },
+    log_confusion_matrix: False,
 }
-output_dir: DeepCT_outputs/boix/ct_v2/all/multi_ct/AdamW_COS_LR0001
+output_dir: DeepCT_outputs/biox/ct_v2/dnase/multi_ct/AdamW_COS_LR0001
 
 random_seed: 1447
 create_subdirectory: True
