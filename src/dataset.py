@@ -535,10 +535,54 @@ class SubsetRandomSampler(torch.utils.data.SubsetRandomSampler):
         ).tolist()
 
 
+# class CustomSubset(EncodeDataset):
+#     """
+#     Subset of a dataset at specified indices.
+
+#     Arguments:
+#         dataset (Dataset): The whole Dataset
+#         indices (sequence): Indices in the whole set selected for subset
+#         labels(sequence) : targets as required for the indices. will be the same length as indices
+#     """
+#     def __init__(self, dataset, indices):
+        
+#         self.dataset = dataset
+#         self.indices = indices
+#         super(CustomSubset, self).__init__(dataset, indices)
+#         # self.reference_sequence_path=self.dataset.reference_sequence_path,
+#         # self.target_path=self.dataset.target_path,
+#         # self.distinct_features=self.dataset.distinct_features,
+#         # self.target_features=self.dataset.target_features,
+#         # self.intervals=self.dataset.intervals,
+#         self.sub_dataset = torch.utils.data.Subset(dataset, indices)
+
+#     def __getitem__(self, idx):
+#         retrieved_sample = self.sub_dataset[idx]
+#         return retrieved_sample
+
+#     def __len__(self):
+#         return len(self.indices)
+
+
 def encode_worker_init_fn(worker_id):
     """Initialization function for multi-processing DataLoader worker"""
     worker_info = torch.utils.data.get_worker_info()
     dataset = worker_info.dataset
+    # reconstruct reference genome object
+    # because it reads from fasta `pyfaidx`
+    # which is not multiprocessing-safe, see:
+    # https://github.com/mdshw5/pyfaidx/issues/167#issuecomment-667591513
+    dataset.reference_sequence = dataset._construct_ref_genome()
+    # and similarly for targets (as they use bigWig file handlers)
+    # which are not multiprocessing-safe, see
+    # see https://github.com/deeptools/pyBigWig/issues/74#issuecomment-439520821
+    dataset.target = dataset._construct_target(dataset.quantitative_features)
+
+
+def subset_encode_worker_init_fn(worker_id):
+    """Initialization function for multi-processing DataLoader worker"""
+    worker_info = torch.utils.data.get_worker_info()
+    dataset = worker_info.dataset.dataset  # subset class
     # reconstruct reference genome object
     # because it reads from fasta `pyfaidx`
     # which is not multiprocessing-safe, see:
