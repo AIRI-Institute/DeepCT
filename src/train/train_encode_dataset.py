@@ -173,13 +173,9 @@ class TrainEncodeDatasetModel(object):
         By default, this contains `"roc_auc"`, which maps to
         `sklearn.metrics.roc_auc_score`, and `"average_precision"`,
         which maps to `sklearn.metrics.average_precision_score`.
-    prediction_transform : callable (default = torch.sigmoid)
-        A function to call on predicted values before computin metrics
-        note that loss is computed _before_ transform, whereas all other 
-        metrics - after transform. If None, no transform applied 
-    target_transform : callable (default = None)
-        Same as prediction_transform but for target values
-
+    metrics_transforms: dict
+        A dictionary that maps metric names (`str`) to a transform function
+        which should be applied to data before metrics computation
     """
 
     def __init__(
@@ -205,10 +201,9 @@ class TrainEncodeDatasetModel(object):
         logging_verbosity=2,
         checkpoint_resume=None,
         metrics=dict(roc_auc=roc_auc_score, average_precision=average_precision_score),
+        metrics_transforms=dict(roc_auc=None, average_precision=None),
         log_confusion_matrix=True,
         score_threshold=0.5,
-        prediction_transform=torch.sigmoid,
-        target_transform=None,
     ):
         """
         Constructs a new `TrainModel` object.
@@ -272,11 +267,13 @@ class TrainEncodeDatasetModel(object):
             lambda idx: self.train_loader.dataset.target_features[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
+            metrics_transforms=metrics_transforms,
         )
         self._test_metrics = PerformanceMetrics(
             lambda idx: self.train_loader.dataset.target_features[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
+            metrics_transforms=metrics_transforms,
         )
         self.log_confusion_matrix = log_confusion_matrix
 
@@ -332,18 +329,6 @@ class TrainEncodeDatasetModel(object):
         )
 
         self.score_threshold = score_threshold
-
-        self.val_reduction_factor = 1
-        val_batch_size = self.val_loader.batch_size
-        val_target_size = self.val_loader.dataset.target_size
-        total_val_target_size = len(self.val_loader) * val_batch_size * val_target_size
-        if total_val_target_size > MAX_TOTAL_VAL_TARGET_SIZE:
-            self.val_reduction_factor = math.ceil(
-                total_val_target_size / MAX_TOTAL_VAL_TARGET_SIZE
-            )
-
-        self.prediction_transform = prediction_transform
-        self.target_transform = target_transform
 
     def train_and_validate(self):
         """
@@ -466,26 +451,19 @@ class TrainEncodeDatasetModel(object):
         loss = self.criterion(outputs, targets)
         if self.criterion.reduction == "sum":
             loss = loss / self.criterion.weight.sum()
-        if self.prediction_transform is not None:
-            predictions = self.prediction_transform(outputs)
-        else:
-            predictions = outputs
-
-        if self.target_transform is not None:
-            targets = self.target_transform(targets)
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
         if self.masked_targets:
-            target_mask = target_mask.cpu().detach().numpy()
+            target_mask = target_mask
         else:
             target_mask = None
 
         return (
-            predictions.cpu().detach().numpy(),
-            targets.cpu().detach().numpy(),
+            outputs,
+            targets,
             target_mask,
             loss.item(),
         )
@@ -528,10 +506,10 @@ class TrainEncodeDatasetModel(object):
         self._writer.add_scalar("loss/train", train_loss, step)
 
         if self.masked_targets:
-            train_target_masks = expand_dims(np.concatenate(train_target_masks))
+            train_target_masks = train_target_masks
         train_scores = self._compute_metrics(
-            expand_dims(np.concatenate(train_predictions)),
-            expand_dims(np.concatenate(train_targets)),
+            train_predictions,
+            train_targets,
             train_target_masks,
             log_prefix="train",
         )
@@ -559,6 +537,9 @@ class TrainEncodeDatasetModel(object):
         logger.info("validation loss: {0}".format(validation_loss))
 
         if self.log_confusion_matrix:
+            raise NotImplementedError
+            # TODO baseically it's not coplicated to fix this part
+            # just convert tensors to np.array and concatenate
             if self.masked_targets:
                 masked_targets = all_targets.flatten()[all_target_masks.flatten()]
                 masked_predictions = all_predictions.flatten()[
@@ -627,40 +608,13 @@ class TrainEncodeDatasetModel(object):
                 if self.criterion.reduction == "sum":
                     loss = loss / self.criterion.weight.sum()
 
-                if self.prediction_transform is not None:
-                    predictions = self.prediction_transform(outputs)
-                else:
-                    predictions = outputs
-                if self.target_transform is not None:
-                    targets = self.target_transform(targets)
-
-                predictions = predictions.view(-1, predictions.shape[-1])
-                targets = targets.view(-1, targets.shape[-1])
+                all_predictions.append(outputs)
+                all_targets.append(targets)
                 if self.masked_targets:
-                    target_mask = target_mask.view(-1, target_mask.shape[-1])
-                if self.val_reduction_factor > 1:
-                    reduced_val_batch_size = (
-                        predictions.shape[0] // self.val_reduction_factor
-                    )
-                    reduced_index = np.random.choice(
-                        predictions.shape[0], reduced_val_batch_size
-                    )
-
-                    predictions = predictions[reduced_index]
-                    targets = targets[reduced_index]
-                    if self.masked_targets:
-                        target_mask = target_mask[reduced_index]
-
-                all_predictions.append(predictions.data.cpu().numpy())
-                all_targets.append(targets.data.cpu().numpy())
-                if self.masked_targets:
-                    all_target_masks.append(target_mask.data.cpu().numpy())
+                    all_target_masks.append(target_mask)
 
                 batch_losses.append(loss.item())
-        all_predictions = expand_dims(np.concatenate(all_predictions))
-        all_targets = expand_dims(np.concatenate(all_targets))
-        if self.masked_targets:
-            all_target_masks = expand_dims(np.concatenate(all_target_masks))
+
         return np.average(batch_losses), all_predictions, all_targets, all_target_masks
 
     def _compute_metrics(self, predictions, targets, target_mask, log_prefix=None):
