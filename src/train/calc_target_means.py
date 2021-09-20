@@ -68,7 +68,7 @@ def get_full_dl(configs):
         data_config["intervals"] = genome_intervals
 
         # train_config = dataset_info["dataset_args"].copy()
-        del data_config['fold']
+        # del data_config['fold']
         del data_config['n_folds']
         # train_config["intervals"] = genome_intervals
         if "train_transform" in dataset_info:
@@ -163,20 +163,22 @@ if __name__ == "__main__":
     ct_mean_targets = torch.mean(full_targets, dim=1).flatten()
     print(ct_mean_targets.shape)
 
-    y_cat = pd.cut(ct_mean_targets.cpu().numpy(), 10, labels=range(10))
-    y_cat = np.array(y_cat)
+    np.save(f'/home/thurs/DeepCT/results/ct_mean_targets.npy', ct_mean_targets.cpu().numpy())
 
-    skf = StratifiedKFold(n_splits=5, shuffle=False)
+    # y_cat = pd.cut(ct_mean_targets.cpu().numpy(), 10, labels=range(10))
+    # y_cat = np.array(y_cat)
 
-    train_y = []
-    val_y = []
-    ct_range = np.array(range(631))
-    for train_index, val_index in skf.split(ct_range, y_cat):
-        train_y.append(y_cat[train_index])
-        val_y.append(y_cat[val_index])
+    # skf = StratifiedKFold(n_splits=5, shuffle=False)
 
-    train_y = np.array(train_y)
-    val_y = np.array(val_y)
-    np.save(f'/home/thurs/DeepCT/results/ct_means_train.npy', train_y)
-    np.save(f'/home/thurs/DeepCT/results/ct_means_val.npy', val_y)
+    # train_y = []
+    # val_y = []
+    # ct_range = np.array(range(631))
+    # for train_index, val_index in skf.split(ct_range, y_cat):
+    #     train_y.append(y_cat[train_index])
+    #     val_y.append(y_cat[val_index])
+
+    # train_y = np.array(train_y)
+    # val_y = np.array(val_y)
+    # np.save(f'/home/thurs/DeepCT/results/ct_means_train.npy', train_y)
+    # np.save(f'/home/thurs/DeepCT/results/ct_means_val.npy', val_y)
 
