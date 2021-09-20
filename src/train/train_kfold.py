@@ -379,10 +379,12 @@ class TrainEncodeDatasetModel(object):
             report_train_target_masks = []
             for fold, (train_batch_loader, valid_batch_loader) in enumerate(self.dataloaders):
                 print('epoch:', epoch, 'fold:', fold)
+                self.cur_fold = fold
+
                 # train
                 for batch in tqdm(train_batch_loader):
                     t_i = time()
-                    prediction, target, target_mask, loss = self.train(batch, fold)
+                    prediction, target, target_mask, loss = self.train(batch)
                     t_f = time()
                     time_per_batch.append(t_f - t_i)
                     report_train_losses.append(loss)
@@ -393,8 +395,9 @@ class TrainEncodeDatasetModel(object):
                     total_steps += 1
                     self._update_and_log_lr_if_needed(total_steps)
 
+                    # break # !!!
+
                 # метрики на train для отчета
-                # if total_steps and total_steps % self.nth_step_report_stats == 0:
                 self._log_train_metrics_and_clean_cache(
                     epoch,
                     total_steps,
@@ -405,9 +408,11 @@ class TrainEncodeDatasetModel(object):
                     report_train_target_masks,
                 )
 
-
                 # val
-                validation_loss = self._validate_and_log_metrics(val_loader=valid_batch_loader, step=total_steps)
+                validation_loss = self._validate_and_log_metrics(
+                    val_loader=valid_batch_loader, 
+                    step=total_steps
+                    )
                 
                 self._update_and_log_lr_if_needed(
                     total_steps, math.ceil(validation_loss * 1000.0) / 1000.0
@@ -440,101 +445,7 @@ class TrainEncodeDatasetModel(object):
         return None
 
 
-    def train_and_validate(self):
-        """
-        Trains the model and measures validation performance.
-
-        """
-        min_loss = self._min_loss
-
-        time_per_batch = []
-        report_train_losses = []
-        report_train_predictions = []
-        report_train_targets = []
-        if self.masked_targets:
-            report_train_target_masks = []
-        else:
-            report_train_target_masks = None
-        total_steps = self._start_step
-
-        # make necessary LR scheduler steps
-        # if they are not based on validation loss
-        for step in range(1, total_steps + 1):
-            self._update_and_log_lr_if_needed(step, log=False)
-
-        for epoch in tqdm(range(self.n_epochs)):
-            self.mask_iterator = itertools.cycle(self.ct_mask_idx)
-            for batch in tqdm(self.train_loader):
-                t_i = time()
-                prediction, target, target_mask, loss = self.train(batch)
-                t_f = time()
-                time_per_batch.append(t_f - t_i)
-                report_train_losses.append(loss)
-                report_train_predictions.append(prediction)
-                report_train_targets.append(target)
-                if self.masked_targets:
-                    report_train_target_masks.append(target_mask)
-                total_steps += 1
-                self._update_and_log_lr_if_needed(total_steps)
-
-                if total_steps and total_steps % self.nth_step_report_stats == 0:
-                    self._log_train_metrics_and_clean_cache(
-                        epoch,
-                        total_steps,
-                        time_per_batch,
-                        report_train_losses,
-                        report_train_predictions,
-                        report_train_targets,
-                        report_train_target_masks,
-                    )
-                    time_per_batch = []
-                    report_train_losses = []
-                    report_train_predictions = []
-                    report_train_targets = []
-                    if self.masked_targets:
-                        report_train_target_masks = []
-
-                    validation_loss = self._validate_and_log_metrics(total_steps)
-
-                    self._update_and_log_lr_if_needed(
-                        total_steps, math.ceil(validation_loss * 1000.0) / 1000.0
-                    )
-
-                    if validation_loss < min_loss:
-                        min_loss = validation_loss
-                        self._save_checkpoint(total_steps, min_loss, is_best=True)
-                        logger.info("Updating `best_model.pth.tar`")
-
-                if total_steps % self.nth_step_save_checkpoint == 0:
-                    checkpoint_basename = "checkpoint"
-                    if (
-                        self.save_new_checkpoints is not None
-                        and self.save_new_checkpoints >= total_steps
-                    ):
-                        checkpoint_basename = "checkpoint-{0}".format(
-                            strftime("%m%d%H%M%S")
-                        )
-
-                    self._save_checkpoint(
-                        total_steps,
-                        min_loss,
-                        is_best=False,
-                        filename=checkpoint_basename,
-                    )
-                    logger.debug(
-                        "Saving checkpoint `{0}.pth.tar`".format(checkpoint_basename)
-                    )
-                if (
-                    self.masked_targets
-                    and self.nth_step_log_embeddings is not None
-                    and total_steps % self.nth_step_log_embeddings == 0
-                ):
-                    self._log_embeddings(total_steps)
-
-        self._writer.flush()
-
-
-    def train(self, batch, fold):
+    def train(self, batch):
         """
         Trains the model on a batch of data.
 
@@ -555,8 +466,8 @@ class TrainEncodeDatasetModel(object):
 
             # make train mask
             target_mask_tr = target_mask.clone()
-            target_mask_tr[:, self.ct_masks[fold].min(): self.ct_masks[fold].max()+1] = False
-            self.target_mask_tr = target_mask_tr
+            target_mask_tr[:, self.ct_masks[self.cur_fold].min(): self.ct_masks[self.cur_fold].max()+1] = False
+            # self.target_mask_tr = target_mask_tr
 
             outputs = self.model(sequence_batch, cell_type_batch)
 
@@ -589,7 +500,7 @@ class TrainEncodeDatasetModel(object):
             loss.item(),
         )
 
-    def _evaluate_on_subset(self, data_loader):
+    def _evaluate_on_ct(self, data_loader):
         """
         Makes predictions for some labeled input data.
 
@@ -616,31 +527,38 @@ class TrainEncodeDatasetModel(object):
         else:
             all_target_masks = None
 
-        # val mask
-        self.target_mask_val = ~self.target_mask_tr
-
         for batch in tqdm(data_loader):
-            if self.masked_targets:
-                sequence_batch = batch[0].to(self.device)
-                cell_type_batch = batch[1].to(self.device)
-                targets = batch[2].to(self.device)
-                target_mask = batch[3].to(self.device)
+            sequence_batch = batch[0].to(self.device)
+            cell_type_batch = batch[1].to(self.device)
+            targets = batch[2].to(self.device)
+            target_mask = batch[3].to(self.device)
+            # print('targets shape:', targets.shape)
 
-                if self.target_mask_val.shape[0] != targets.shape[0]:
-                    self.target_mask_val = self.target_mask_val[:targets.shape[0], ...]
-            else:
-                # retrieved_seq, target
-                sequence_batch = batch[0].to(self.device)
-                targets = batch[1].to(self.device)
+            # val mask
+            target_mask_tr = target_mask.clone()
+            target_mask_tr[:, self.ct_masks[self.cur_fold].min(): self.ct_masks[self.cur_fold].max()+1] = False
+            target_mask_val = ~target_mask_tr
 
-            # compure a baseline
-            baseline = (targets * self.target_mask_val).sum(axis=1) / self.target_mask_val.sum(axis=1)
+            # # если маски не совпадают по оси batch_size
+            # if self.target_mask_tr.shape[0] > target_mask.shape[0]:
+            #     # обновляю маски
+            #     self.target_mask_tr = self.target_mask_tr[:target_mask.shape[0], ...]
+            #     self.target_mask_val = ~self.target_mask_tr  
+            #     # print('new target_mask_val shape:', self.target_mask_val.shape)
+
+            # elif self.target_mask_tr.shape[0] < target_mask.shape[0]:
+            #     # обновляю маски
+            #     self.target_mask_tr = torch.repeat_interleave(baseline.unsqueeze(1), self.n_cell_types, dim=1)
+            #     print('new target_mask shape:', target_mask.shape)
+
+            # compute a baseline
+            baseline = (targets * target_mask_tr).sum(axis=1) / target_mask_tr.sum(axis=1)
             baseline = torch.repeat_interleave(baseline.unsqueeze(1), self.n_cell_types, dim=1)
 
             with torch.no_grad():
                 if self.masked_targets:
                     outputs = self.model(sequence_batch, cell_type_batch)
-                    self.criterion.weight = self.target_mask_val
+                    self.criterion.weight = target_mask_val
                 else:
                     outputs = self.model(sequence_batch)
 
@@ -654,7 +572,8 @@ class TrainEncodeDatasetModel(object):
                 baseline = baseline.view(-1, baseline.shape[-1])
 
                 if self.masked_targets:
-                    target_mask = self.target_mask_val.view(-1, self.target_mask_val.shape[-1])
+                    target_mask = target_mask_val.view(-1, target_mask_val.shape[-1])
+
                 if self.val_reduction_factor > 1:
                     reduced_val_batch_size = (
                         predictions.shape[0] // self.val_reduction_factor
@@ -682,7 +601,13 @@ class TrainEncodeDatasetModel(object):
         if self.masked_targets:
             all_target_masks = expand_dims(np.concatenate(all_target_masks))
 
-        return np.average(batch_losses), all_predictions, all_targets, all_baselines, all_target_masks
+        return (
+            np.average(batch_losses), 
+            all_predictions, 
+            all_targets, 
+            all_baselines, 
+            all_target_masks
+        )
 
 
     def _update_and_log_lr_if_needed(self, total_steps, validation_loss=None, log=True):
@@ -781,99 +706,6 @@ class TrainEncodeDatasetModel(object):
 
         return validation_loss
 
-
-    def _evaluate_on_val_ct(self):
-        """
-        Makes predictions for some labeled input data.
-
-        Parameters
-        ----------
-        data_in_batches : list(SamplesBatch)
-            A list of tuples of the data, where the first element is
-            the example, and the second element is the label.
-
-        Returns
-        -------
-        tuple(float, list(numpy.ndarray))
-            Returns the average loss, and the list of all predictions.
-
-        """
-        self.model.eval()
-
-        sequence_batch = self.batch[0].to(self.device)
-        cell_type_batch = self.batch[1].to(self.device)
-        targets = self.batch[2].to(self.device)
-        target_mask = self.batch[3].to(self.device)
-        # print('target_mask', target_mask.shape)
-
-        # val mask
-        self.target_mask_val = ~self.target_mask_tr
-
-        if self.target_mask_val.shape[0] != targets.shape[0]:
-            self.target_mask_val = self.target_mask_val[:targets.shape[0], ...]
-
-        # compute baseline (mean feature on train step)
-        baseline = (targets * self.target_mask_tr).sum(axis=1) / self.target_mask_tr.sum(axis=1)
-        baseline_batch = torch.repeat_interleave(baseline.unsqueeze(1), self.n_cell_types, dim=1)
-        baseline_batch = baseline_batch.view(-1, baseline_batch.shape[-1])
-
-        with torch.no_grad():
-            if self.masked_targets:
-                outputs = self.model(sequence_batch, cell_type_batch)
-                # print('outputs', outputs.shape)
-                self.criterion.weight = self.target_mask_val
-            else:
-                outputs = self.model(sequence_batch)
-            # val loss
-            loss = self.criterion(outputs, targets)
-            if self.criterion.reduction == "sum":
-                loss = loss / self.criterion.weight.sum()
-
-            # val preds (using target_mask_val)
-            predictions = torch.sigmoid(outputs)
-            # predictions = predictions * self.target_mask_val
-
-            predictions = predictions.view(-1, predictions.shape[-1])
-            targets = targets.view(-1, targets.shape[-1])
-
-            if self.masked_targets:
-                target_mask = self.target_mask_val.view(-1, self.target_mask_val.shape[-1])
-
-            if self.val_reduction_factor > 1:
-                reduced_val_batch_size = (
-                    predictions.shape[0] // self.val_reduction_factor
-                )
-                reduced_index = np.random.choice(
-                    predictions.shape[0], reduced_val_batch_size
-                )
-
-                predictions = predictions[reduced_index]
-                targets = targets[reduced_index]
-                if self.masked_targets:
-                    target_mask = target_mask[reduced_index]
-
-            # all_predictions.append(predictions.data.cpu().numpy())
-            # all_targets.append(targets.data.cpu().numpy())
-            # if self.masked_targets:
-            #     all_target_masks.append(target_mask.data.cpu().numpy())
-
-            # batch_losses.append(loss.item())
-
-        # all_predictions = expand_dims(np.concatenate(all_predictions))
-        # all_targets = expand_dims(np.concatenate(all_targets))
-        # if self.masked_targets:
-        #     all_target_masks = expand_dims(np.concatenate(all_target_masks))
-
-        # return np.average(batch_losses), all_predictions, all_targets, all_target_masks
-
-        return (
-            loss.item(), 
-            predictions.data.cpu().numpy(), 
-            targets.data.cpu().numpy(), 
-            target_mask.data.cpu().numpy(),
-            baseline_batch.data.cpu().numpy(),
-        )
-  
 
     def _evaluate_on_data(self, data_loader):
         """
@@ -1029,7 +861,7 @@ class TrainEncodeDatasetModel(object):
             all_targets,
             baseline,
             all_target_masks
-        ) = self._evaluate_on_subset(val_loader)
+        ) = self._evaluate_on_ct(val_loader)
 
         average_scores = self._compute_metrics(
             all_predictions, all_targets, all_target_masks, log_prefix="validation"
@@ -1041,44 +873,6 @@ class TrainEncodeDatasetModel(object):
 
         return average_scores, baselines_scores, all_predictions, all_targets, all_target_masks
 
-
-    # def evaluate(self, data_loader):
-    #     """
-    #     Measures the model test performance.
-    #     Returns
-    #     -------
-    #     dict
-    #         A dictionary, where keys are the names of the loss metrics,
-    #         and the values are the average value for that metric over
-    #         the test set.
-    #     """
-    #     (
-    #         average_loss,
-    #         all_predictions,
-    #         all_targets,
-    #         all_target_masks,
-    #     ) = self._evaluate_on_data(data_loader)
-
-    #     average_scores = self._test_metrics.update(
-    #         all_predictions, all_targets, all_target_masks
-    #     )
-    #     np.savez_compressed(
-    #         os.path.join(self.output_dir, "test_predictions.npz"), data=all_predictions
-    #     )
-
-    #     for name, score in average_scores.items():
-    #         logger.info("test {0}: {1}".format(name, score))
-
-    #     test_performance = os.path.join(self.output_dir, "test_performance.txt")
-    #     feature_scores_dict = self._test_metrics.write_feature_scores_to_file(
-    #         test_performance
-    #     )
-
-    #     average_scores["loss"] = average_loss
-
-    #     self._test_metrics.visualize(all_predictions, all_targets, self.output_dir)
-
-    #     return (average_scores, feature_scores_dict)
 
     def _save_checkpoint(self, step, min_loss, is_best, filename="checkpoint"):
         """
