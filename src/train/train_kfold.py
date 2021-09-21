@@ -219,6 +219,7 @@ class TrainEncodeDatasetModel(object):
         Constructs a new `TrainModel` object.
         """
         self.model = model
+        self.checkpoint_resume = checkpoint_resume
         # self.cfg = configs,
         # self.n_folds = n_folds  # self.cfg["dataset"]["dataset_args"]["n_folds"]
         self.n_cell_types = n_cell_types  # self.cfg["dataset"]["dataset_args"]["n_cell_types"]
@@ -371,12 +372,91 @@ class TrainEncodeDatasetModel(object):
         for step in range(1, total_steps + 1):
             self._update_and_log_lr_if_needed(step, log=False)
 
-        for epoch in tqdm(range(self.n_epochs)):
-            time_per_batch = []
-            report_train_losses = []
-            report_train_predictions = []
-            report_train_targets = []
-            report_train_target_masks = []
+        time_per_batch = []
+        report_train_losses = []
+        report_train_predictions = []
+        report_train_targets = []
+        report_train_target_masks = [] 
+
+        checkpoint_epoch = 0
+        if self.checkpoint_resume is not None:
+            
+            checkpoint_fold = 5
+
+            print(f'Start training from {checkpoint_epoch} epoch, fold {checkpoint_fold}')
+
+            self.cur_fold = checkpoint_fold
+            for _, (train_batch_loader, valid_batch_loader) in enumerate(self.dataloaders[checkpoint_fold:]):
+                print('epoch:', checkpoint_epoch, 'fold:', self.cur_fold)
+                # train
+                for batch in tqdm(train_batch_loader):
+                    t_i = time()
+                    prediction, target, target_mask, loss = self.train(batch)
+                    t_f = time()
+                    time_per_batch.append(t_f - t_i)
+                    report_train_losses.append(loss)
+                    report_train_predictions.append(prediction)
+                    report_train_targets.append(target)
+                    if self.masked_targets:
+                        report_train_target_masks.append(target_mask)
+                    total_steps += 1
+                    self._update_and_log_lr_if_needed(total_steps)
+                
+                # метрики на train для отчета
+                self._log_train_metrics_and_clean_cache(
+                    checkpoint_epoch,
+                    total_steps,
+                    time_per_batch,
+                    report_train_losses,
+                    report_train_predictions,
+                    report_train_targets,
+                    report_train_target_masks,
+                )
+
+                # val
+                validation_loss = self._validate_and_log_metrics(
+                    val_loader=valid_batch_loader, 
+                    step=total_steps
+                    )
+                
+                self._update_and_log_lr_if_needed(
+                    total_steps, math.ceil(validation_loss * 1000.0) / 1000.0
+                )
+
+                if validation_loss < min_loss:
+                    min_loss = validation_loss
+                    self._save_checkpoint(total_steps, min_loss, is_best=True)
+                    logger.info("Updating `best_model.pth.tar`")
+
+                self._writer.add_scalar("fold", self.cur_fold, total_steps)
+
+                self.cur_fold += 1
+
+            # if total_steps % self.nth_step_save_checkpoint == 0:
+            checkpoint_basename = "checkpoint"
+            if (self.save_new_checkpoints is not None
+                and self.save_new_checkpoints >= total_steps):
+                checkpoint_basename = "checkpoint-{0}".format(
+                    strftime("%m%d%H%M%S")
+                )
+            self._save_checkpoint(
+                total_steps,
+                min_loss,
+                is_best=False,
+                filename=checkpoint_basename,
+            )
+            logger.debug(
+                "Saving checkpoint `{0}.pth.tar`".format(checkpoint_basename)
+            )
+
+            self._log_embeddings(total_steps)
+
+            checkpoint_epoch += 1
+
+            print(f'Epoch from checkpoint completed; Start {checkpoint_epoch} epoch')
+
+        for epoch in tqdm(range(checkpoint_epoch, self.n_epochs)):
+
             for fold, (train_batch_loader, valid_batch_loader) in enumerate(self.dataloaders):
                 self.cur_fold = fold
                 print('epoch:', epoch, 'fold:', self.cur_fold)
@@ -394,8 +474,6 @@ class TrainEncodeDatasetModel(object):
                         report_train_target_masks.append(target_mask)
                     total_steps += 1
                     self._update_and_log_lr_if_needed(total_steps)
-
-                    # break # !!!
 
                 # метрики на train для отчета
                 self._log_train_metrics_and_clean_cache(
@@ -444,6 +522,7 @@ class TrainEncodeDatasetModel(object):
 
             self._log_embeddings(total_steps)
         self._writer.flush()
+
         return None
 
 
