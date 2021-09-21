@@ -378,8 +378,8 @@ class TrainEncodeDatasetModel(object):
             report_train_targets = []
             report_train_target_masks = []
             for fold, (train_batch_loader, valid_batch_loader) in enumerate(self.dataloaders):
-                print('epoch:', epoch, 'fold:', fold)
                 self.cur_fold = fold
+                print('epoch:', epoch, 'fold:', self.cur_fold)
 
                 # train
                 for batch in tqdm(train_batch_loader):
@@ -422,6 +422,8 @@ class TrainEncodeDatasetModel(object):
                     min_loss = validation_loss
                     self._save_checkpoint(total_steps, min_loss, is_best=True)
                     logger.info("Updating `best_model.pth.tar`")
+
+                self._writer.add_scalar("fold", self.cur_fold, total_steps)
 
             # if total_steps % self.nth_step_save_checkpoint == 0:
             checkpoint_basename = "checkpoint"
@@ -466,7 +468,7 @@ class TrainEncodeDatasetModel(object):
 
             # make train mask
             target_mask_tr = target_mask.clone()
-            target_mask_tr[:, self.ct_masks[self.cur_fold].min(): self.ct_masks[self.cur_fold].max()+1] = False
+            target_mask_tr[:, self.ct_masks[self.cur_fold]] = False
             # self.target_mask_tr = target_mask_tr
 
             outputs = self.model(sequence_batch, cell_type_batch)
@@ -536,20 +538,8 @@ class TrainEncodeDatasetModel(object):
 
             # val mask
             target_mask_tr = target_mask.clone()
-            target_mask_tr[:, self.ct_masks[self.cur_fold].min(): self.ct_masks[self.cur_fold].max()+1] = False
+            target_mask_tr[:, self.ct_masks[self.cur_fold]] = False
             target_mask_val = ~target_mask_tr
-
-            # # если маски не совпадают по оси batch_size
-            # if self.target_mask_tr.shape[0] > target_mask.shape[0]:
-            #     # обновляю маски
-            #     self.target_mask_tr = self.target_mask_tr[:target_mask.shape[0], ...]
-            #     self.target_mask_val = ~self.target_mask_tr  
-            #     # print('new target_mask_val shape:', self.target_mask_val.shape)
-
-            # elif self.target_mask_tr.shape[0] < target_mask.shape[0]:
-            #     # обновляю маски
-            #     self.target_mask_tr = torch.repeat_interleave(baseline.unsqueeze(1), self.n_cell_types, dim=1)
-            #     print('new target_mask shape:', target_mask.shape)
 
             # compute a baseline
             baseline = (targets * target_mask_tr).sum(axis=1) / target_mask_tr.sum(axis=1)
@@ -664,10 +654,16 @@ class TrainEncodeDatasetModel(object):
 
 
     def _validate_and_log_metrics(self, val_loader, step):
-        valid_scores, baselines_scores, all_predictions, all_targets, all_target_masks = self.validate(val_loader)
+        (
+            valid_scores, 
+            baselines_scores, 
+            all_predictions, 
+            all_targets, 
+            all_target_masks
+         ) = self.validate(val_loader)
+
         validation_loss = valid_scores["loss"]
         self._writer.add_scalar("loss/test", validation_loss, step)
-        # self._writer.add_scalar("baseline/test", baselines_scores['average_precision'], step)
         to_log = [str(validation_loss)]
 
         # log model metrics
@@ -676,10 +672,10 @@ class TrainEncodeDatasetModel(object):
                 to_log.append(str(valid_scores[k]))
                 to_log.append(str(baselines_scores[k]))
                 self._writer.add_scalar(f"model_{k}/val", valid_scores[k], step)
-                self._writer.add_scalar("baseline_mAP/val", baselines_scores[k], step)
+                self._writer.add_scalar(f"baseline_{k}/val", baselines_scores[k], step)
             else:
                 to_log.append("NA")
-                
+
         self._validation_logger.info("\t".join(to_log))
 
         logger.info("validation loss: {0}".format(validation_loss))
@@ -817,7 +813,7 @@ class TrainEncodeDatasetModel(object):
             predictions, targets, target_mask)
         if log_prefix:
             for name, score in scores.items():
-                logger.info("{} {}: {}".format(log_prefix, name, score))
+                logger.info(f"{log_prefix} {name}: {score}")
 
         return scores
 
@@ -837,8 +833,8 @@ class TrainEncodeDatasetModel(object):
         
         scores = self._validation_metrics.update(baseline, targets, target_mask)
         if log_prefix:
-            for _, score in scores.items():
-                logger.info(f"{log_prefix} baseline: {score}")
+            for name, score in scores.items():
+                logger.info(f"{log_prefix} baseline {name}: {score}")
 
         return scores
 
