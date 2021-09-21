@@ -480,6 +480,61 @@ class LargeRandomSampler(torch.utils.data.RandomSampler):
         return torch.randperm(chunk_size, generator=self.generator)
 
 
+class SubsetRandomSampler(torch.utils.data.SubsetRandomSampler):
+    """
+    Samples subset of dataset. Subset size could be defined as
+    fraction of dataset size of exact number of samples
+
+    Parameters
+    ----------
+    data_source : torch.utils.data.Dataset
+        Dataset to sample from.
+    num_samples : int or float
+        Number of samples to draw, default=`len(dataset)`.
+        when set to -1, will use all samples in the dataset
+        when set to float 0<num_samples<1 will be interpreted as
+                                a fraction of dataset to use
+        when set to int 1<=num_samples<=len(dataset) will use
+                             exactly num_samples samples
+        when num_samples>=len(dataset) will reduce num_samples to len(dataset)
+    generator : torch.Generator
+        Generator used in sampling.
+    """
+
+    def __init__(self, data_source, num_samples=-1, generator=None):
+        self.data_source = data_source
+        if generator == None:
+            generator = torch.Generator()
+            generator.manual_seed(
+                int(torch.empty((), dtype=torch.int64).random_().item())
+            )
+
+        if len(self.data_source) == 0:
+            indices = []
+        else:
+            if num_samples == -1:
+                indices = range(len(data_source))
+            elif 0 < num_samples < 1:
+                num_samples = max(1, len(data_source) * num_samples)
+                indices = self._gen_random_index(num_samples, generator)
+            elif 1 <= num_samples <= len(data_source):
+                indices = self._gen_random_index(int(num_samples), generator)
+            elif num_samples > len(data_source):
+                indices = range(len(data_source))
+            else:
+                raise ValueError
+
+        super(SubsetRandomSampler, self).__init__(indices, generator)
+
+    def _gen_random_index(self, N, generator):
+        return torch.randint(
+            high=len(self.data_source),
+            size=(N,),
+            dtype=torch.int64,
+            generator=generator,
+        ).tolist()
+
+
 def encode_worker_init_fn(worker_id):
     """Initialization function for multi-processing DataLoader worker"""
     worker_info = torch.utils.data.get_worker_info()
