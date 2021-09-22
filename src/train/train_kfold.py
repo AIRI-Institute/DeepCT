@@ -198,6 +198,9 @@ class TrainEncodeDatasetModel(object):
         # train_loader,
         # val_loader,
         n_epochs,
+        checkpoint_epoch,
+        checkpoint_fold,
+        checkpoint_resume,
         report_stats_every_n_steps,
         output_dir,
         scheduler_class=None,
@@ -210,7 +213,6 @@ class TrainEncodeDatasetModel(object):
         device="cpu",
         data_parallel=False,
         logging_verbosity=2,
-        checkpoint_resume=None,
         metrics=dict(roc_auc=roc_auc_score, average_precision=average_precision_score),
         log_confusion_matrix=True,
         score_threshold=0.5,
@@ -220,6 +222,8 @@ class TrainEncodeDatasetModel(object):
         """
         self.model = model
         self.checkpoint_resume = checkpoint_resume
+        self.checkpoint_epoch = checkpoint_epoch
+        self.checkpoint_fold = checkpoint_fold
         # self.cfg = configs,
         # self.n_folds = n_folds  # self.cfg["dataset"]["dataset_args"]["n_folds"]
         self.n_cell_types = n_cell_types  # self.cfg["dataset"]["dataset_args"]["n_cell_types"]
@@ -378,16 +382,13 @@ class TrainEncodeDatasetModel(object):
         report_train_targets = []
         report_train_target_masks = [] 
 
-        checkpoint_epoch = 0
         if self.checkpoint_resume is not None:
-            
-            checkpoint_fold = 5
 
-            print(f'Start training from {checkpoint_epoch} epoch, fold {checkpoint_fold}')
+            print(f'Start training from {self.checkpoint_epoch} epoch, fold {self.checkpoint_fold}')
 
-            self.cur_fold = checkpoint_fold
-            for _, (train_batch_loader, valid_batch_loader) in enumerate(self.dataloaders[checkpoint_fold:]):
-                print('epoch:', checkpoint_epoch, 'fold:', self.cur_fold)
+            self.cur_fold = self.checkpoint_fold
+            for _, (train_batch_loader, valid_batch_loader) in enumerate(self.dataloaders[self.checkpoint_fold:]):
+                print('epoch:', self.checkpoint_epoch, 'fold:', self.cur_fold)
                 # train
                 for batch in tqdm(train_batch_loader):
                     t_i = time()
@@ -404,7 +405,7 @@ class TrainEncodeDatasetModel(object):
                 
                 # метрики на train для отчета
                 self._log_train_metrics_and_clean_cache(
-                    checkpoint_epoch,
+                    self.checkpoint_epoch,
                     total_steps,
                     time_per_batch,
                     report_train_losses,
@@ -451,11 +452,11 @@ class TrainEncodeDatasetModel(object):
 
             self._log_embeddings(total_steps)
 
-            checkpoint_epoch += 1
+            self.checkpoint_epoch += 1
 
-            print(f'Epoch from checkpoint completed; Start {checkpoint_epoch} epoch')
+            print(f'Epoch from checkpoint completed; Start {self.checkpoint_epoch} epoch')
 
-        for epoch in tqdm(range(checkpoint_epoch, self.n_epochs)):
+        for epoch in tqdm(range(self.checkpoint_epoch, self.n_epochs)):
 
             for fold, (train_batch_loader, valid_batch_loader) in enumerate(self.dataloaders):
                 self.cur_fold = fold
