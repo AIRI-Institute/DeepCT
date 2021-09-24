@@ -224,7 +224,6 @@ class TrainEncodeDatasetModel(object):
         self.checkpoint_resume = checkpoint_resume
         self.checkpoint_epoch = checkpoint_epoch
         self.checkpoint_fold = checkpoint_fold
-        # self.cfg = configs,
         # self.n_folds = n_folds  # self.cfg["dataset"]["dataset_args"]["n_folds"]
         self.n_cell_types = n_cell_types  # self.cfg["dataset"]["dataset_args"]["n_cell_types"]
         # self.fold = fold  # self.cfg["dataset"]["dataset_args"]["fold"]
@@ -285,6 +284,11 @@ class TrainEncodeDatasetModel(object):
         )
 
         self._validation_metrics = PerformanceMetrics(
+            lambda idx: self.dataloaders[0][0].dataset.dataset.target_features[idx],
+            report_gt_feature_n_positives=report_gt_feature_n_positives,
+            metrics=metrics,
+        )
+        self._baseline_validation_metrics = PerformanceMetrics(
             lambda idx: self.dataloaders[0][0].dataset.dataset.target_features[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
@@ -457,7 +461,6 @@ class TrainEncodeDatasetModel(object):
             print(f'Epoch from checkpoint completed; Start {self.checkpoint_epoch} epoch')
 
         for epoch in tqdm(range(self.checkpoint_epoch, self.n_epochs)):
-
             for fold, (train_batch_loader, valid_batch_loader) in enumerate(self.dataloaders):
                 self.cur_fold = fold
                 print('epoch:', epoch, 'fold:', self.cur_fold)
@@ -549,7 +552,6 @@ class TrainEncodeDatasetModel(object):
             # make train mask
             target_mask_tr = target_mask.clone()
             target_mask_tr[:, self.ct_masks[self.cur_fold]] = False
-            # self.target_mask_tr = target_mask_tr
 
             outputs = self.model(sequence_batch, cell_type_batch)
 
@@ -614,7 +616,6 @@ class TrainEncodeDatasetModel(object):
             cell_type_batch = batch[1].to(self.device)
             targets = batch[2].to(self.device)
             target_mask = batch[3].to(self.device)
-            # print('targets shape:', targets.shape)
 
             # val mask
             target_mask_tr = target_mask.clone()
@@ -750,8 +751,14 @@ class TrainEncodeDatasetModel(object):
         for k in sorted(self._validation_metrics.metrics.keys()):
             if k in valid_scores and valid_scores[k]:
                 to_log.append(str(valid_scores[k]))
-                to_log.append(str(baselines_scores[k]))
                 self._writer.add_scalar(f"model_{k}/val", valid_scores[k], step)
+            else:
+                to_log.append("NA")
+
+        # log baseline metrics
+        for k in sorted(self._baseline_validation_metrics.metrics.keys()):
+            if k in baselines_scores and baselines_scores[k]:
+                to_log.append(str(baselines_scores[k]))
                 self._writer.add_scalar(f"baseline_{k}/val", baselines_scores[k], step)
             else:
                 to_log.append("NA")
@@ -911,7 +918,7 @@ class TrainEncodeDatasetModel(object):
 
         """
         
-        scores = self._validation_metrics.update(baseline, targets, target_mask)
+        scores = self._baseline_validation_metrics.update(baseline, targets, target_mask)
         if log_prefix:
             for name, score in scores.items():
                 logger.info(f"{log_prefix} baseline {name}: {score}")
