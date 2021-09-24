@@ -333,12 +333,12 @@ class EncodeDataset(torch.utils.data.Dataset):
         if not self._check_retrieved_sequence(retrieved_seq, chrom, position):
             return None
 
-        # # !!!!!
+        # !!!!!
         gen = torch.Generator()
-        gen.manual_seed(position)
-        # target = 
+        gen.manual_seed(int(position))
+        target_rand = torch.rand(target.shape, generator=gen)
 
-        return retrieved_seq, cell_type, target, target_mask
+        return retrieved_seq, cell_type, target_rand, target_mask
 
     def _check_retrieved_sequence(self, sequence, chrom, position) -> bool:
         """Checks whether retrieved sequence is acceptable.
