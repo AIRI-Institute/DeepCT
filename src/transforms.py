@@ -94,3 +94,88 @@ class MaskTracks(torch.nn.Module):
         mask = sample[3]
         mask[self.track_mask] = False
         return (*sample[:3], mask)
+
+
+class LogTargets(torch.nn.Module):
+    """
+    Log targets values
+    note that targets will be first incremented by a pseudocount
+    to process zero target values
+
+    Parameters
+    ----------
+    pseudocount:  float
+        pseudocount value
+    """
+
+    def __init__(self, pseudocount=0):
+        super().__init__()
+        self.pseudocount = pseudocount
+
+    def forward(self, sample):
+        targets = np.log(sample[2] + self.pseudocount)
+        return (*sample[:2], targets, sample[3])
+
+
+class ClipTargets(torch.nn.Module):
+    """
+    Clip (limit) the values in targets array.
+
+    Parameters
+    ----------
+    amin, amax:  float or None
+        Minimum and maximum value. If None, clipping is not
+        performed on the corresponding edge. Only one of a_min and a_max may be None.
+        Both are broadcast against a (see numpy.clip).
+    """
+
+    def __init__(self, amin=None, amax=None):
+        super().__init__()
+        self.amin = amin
+        self.amax = amax
+
+    def forward(self, sample):
+        targets = np.clip(sample[2], self.amin, self.amax)
+        return (*sample[:2], targets, sample[3])
+
+
+class quantitative2sigmoid(torch.nn.Module):
+    """
+    Maps quantitative features to the interval -1...1 using sigmoid function
+
+    Parameters
+    ----------
+    input:  np.ndarray
+        features to be converted.
+
+    threashold:  float
+        threashold substracted from feature values before applying sigmoid function.
+    """
+
+    def __init__(self, threashold=4.9):
+        super().__init__()
+        self.threashold = threashold
+
+    def forward(self, input):
+        return torch.sigmoid(input - self.threashold)
+
+
+class quantitative2qualitative(torch.nn.Module):
+    """
+    Maps quantitative features to the interval -1...1 using sigmoid function
+
+    Parameters
+    ----------
+    input:  np.ndarray
+        features to be converted.
+
+    threashold:  float
+        threashold substracted from feature values before applying sigmoid function.
+    """
+
+    def __init__(self, threashold=4.9):
+        super().__init__()
+        self.threashold = threashold
+
+    def forward(self, input):
+        return input > self.threashold

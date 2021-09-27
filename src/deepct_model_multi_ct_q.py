@@ -22,6 +22,7 @@ class qDeepCT(nn.Module):
         cell_type_embedding_length,
         final_embedding_length,
         n_genomic_features,
+        dropout_rate=0.2,
     ):
         """
         Based on a DeepSEA architecture (see https://github.com/FunctionLab/selene/blob/0.4.8/models/deepsea.py)
@@ -56,13 +57,13 @@ class qDeepCT(nn.Module):
             nn.ReLU(inplace=True),
             nn.MaxPool1d(kernel_size=pool_kernel_size, stride=pool_kernel_size),
             nn.BatchNorm1d(480),
-            nn.Dropout(p=0.2),
+            nn.Dropout(p=dropout_rate),
             nn.Conv1d(480, 960, kernel_size=conv_kernel_size),
             nn.ReLU(inplace=True),
             nn.Conv1d(960, 960, kernel_size=conv_kernel_size),
             nn.ReLU(inplace=True),
             nn.BatchNorm1d(960),
-            nn.Dropout(p=0.2),
+            nn.Dropout(p=dropout_rate),
         )
 
         reduce_by = 2 * (conv_kernel_size - 1)

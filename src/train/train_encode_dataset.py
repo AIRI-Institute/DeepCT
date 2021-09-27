@@ -173,6 +173,12 @@ class TrainEncodeDatasetModel(object):
         By default, this contains `"roc_auc"`, which maps to
         `sklearn.metrics.roc_auc_score`, and `"average_precision"`,
         which maps to `sklearn.metrics.average_precision_score`.
+    prediction_transform : callable (default = torch.sigmoid)
+        A function to call on predicted values before computin metrics
+        note that loss is computed _before_ transform, whereas all other 
+        metrics - after transform. If None, no transform applied 
+    target_transform : callable (default = None)
+        Same as prediction_transform but for target values
 
     """
 
@@ -201,6 +207,8 @@ class TrainEncodeDatasetModel(object):
         metrics=dict(roc_auc=roc_auc_score, average_precision=average_precision_score),
         log_confusion_matrix=True,
         score_threshold=0.5,
+        prediction_transform=torch.sigmoid,
+        target_transform=None,
     ):
         """
         Constructs a new `TrainModel` object.
@@ -334,6 +342,9 @@ class TrainEncodeDatasetModel(object):
                 total_val_target_size / MAX_TOTAL_VAL_TARGET_SIZE
             )
 
+        self.prediction_transform = prediction_transform
+        self.target_transform = target_transform
+
     def train_and_validate(self):
         """
         Trains the model and measures validation performance.
@@ -455,7 +466,13 @@ class TrainEncodeDatasetModel(object):
         loss = self.criterion(outputs, targets)
         if self.criterion.reduction == "sum":
             loss = loss / self.criterion.weight.sum()
-        predictions = torch.sigmoid(outputs)
+        if self.prediction_transform is not None:
+            predictions = self.prediction_transform(outputs)
+        else:
+            predictions = outputs
+
+        if self.target_transform is not None:
+            targets = self.target_transform(targets)
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -609,7 +626,13 @@ class TrainEncodeDatasetModel(object):
                 loss = self.criterion(outputs, targets)
                 if self.criterion.reduction == "sum":
                     loss = loss / self.criterion.weight.sum()
-                predictions = torch.sigmoid(outputs)
+
+                if self.prediction_transform is not None:
+                    predictions = self.prediction_transform(outputs)
+                else:
+                    predictions = outputs
+                if self.target_transform is not None:
+                    targets = self.target_transform(targets)
 
                 predictions = predictions.view(-1, predictions.shape[-1])
                 targets = targets.view(-1, targets.shape[-1])
