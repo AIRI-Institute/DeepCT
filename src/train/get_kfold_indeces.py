@@ -21,7 +21,7 @@ if __name__=='__main__':
     full_dataset = get_full_dataset(configs)
 
     n_folds = configs['dataset']['dataset_args']['n_folds']
-    k_fold = KFold(n_folds, shuffle=True, random_state=666)
+    # k_fold = KFold(n_folds, shuffle=True, random_state=666)
 
     dataset_info = configs["dataset"]
 
@@ -41,13 +41,32 @@ if __name__=='__main__':
     with open(dataset_info["target_features_path"]) as f:
         target_features = list(map(lambda x: x.rstrip(), f.readlines()))
 
-    # маски для seq
-    splits = []
-    for train_idx, test_idx in k_fold.split(genome_intervals):
-        splits.append((train_idx, test_idx))
+    # новые сплиты для seq
+    genome_intervals_arr = np.asarray(genome_intervals, dtype='U10,i8,i8')
+    random.seed(666)
+    random.shuffle(genome_intervals_arr)
+    seq_splits = np.array_split(genome_intervals_arr, n_folds)
 
-    print('# seq folds:', len(splits))
-    print('seq train/val folds:', len(splits[0][0]), len(splits[0][1]))
+    kfold_intervals = []
+    for train_intervals in seq_splits:
+        val_size = int(len(train_intervals)*0.2)
+        random.seed(666)
+        val_intervals = random.sample(train_intervals.tolist(), val_size)
+        kfold_intervals.append((train_intervals, val_intervals))
+
+    print(len(kfold_intervals))
+    print([len(k[0]) for k in kfold_intervals])
+    print([len(k[1]) for k in kfold_intervals])
+    np.save(f'/home/thurs/DeepCT/results/kfold_intervals_hold.npy', kfold_intervals)
+
+
+    # маски для seq
+    # splits = []
+    # for train_idx, test_idx in k_fold.split(genome_intervals):
+    #     splits.append((train_idx, test_idx))
+
+    # print('# seq folds:', len(splits))
+    # print('seq train/val folds:', len(splits[0][0]), len(splits[0][1]))
     
     # np.save(f'/home/thurs/DeepCT/results/kfold_splits_hold.npy', splits)
     # splits = np.load(f'/home/thurs/DeepCT/results/kfold_splits_hold.npy', allow_pickle=True)
@@ -57,6 +76,7 @@ if __name__=='__main__':
     ct_list = list(range(configs['model']['class_args']['n_cell_types'])) 
     ct_masks = []
     for fold in range(n_folds):
+        random.seed(666)
         random.shuffle(ct_list)
         ct_masks.append(np.array_split(ct_list, n_folds))
 
@@ -64,5 +84,5 @@ if __name__=='__main__':
     print('CT train masks:', [c.shape[0] for c in ct_masks[0]])
     print('CT val masks:', [c.shape[0] for c in ct_masks[1]])
 
-    # np.save('results/ct_random_ids_k10.npy', ct_masks)
+    np.save(f'results/ct_random_ids_k{n_folds}.npy', ct_masks)
 

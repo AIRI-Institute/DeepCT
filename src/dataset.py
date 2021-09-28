@@ -294,6 +294,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         bin_start = position - self._start_radius
         bin_end = position + self._end_radius
         targets = self.target.get_feature_data(chrom, bin_start, bin_end)
+
         if self.cell_wise:
             if self.multi_ct_target:
                 target = []

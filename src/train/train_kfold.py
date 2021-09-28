@@ -195,8 +195,6 @@ class TrainEncodeDatasetModel(object):
         optimizer_class,
         optimizer_kwargs,
         dataloaders,
-        # train_loader,
-        # val_loader,
         n_epochs,
         checkpoint_epoch,
         checkpoint_fold,
@@ -229,8 +227,6 @@ class TrainEncodeDatasetModel(object):
         # self.fold = fold  # self.cfg["dataset"]["dataset_args"]["fold"]
         self.ct_masks = ct_masks
         self.dataloaders = dataloaders
-        # self.train_loader = train_loader
-        # self.val_loader = val_loader
         self.criterion = loss_criterion
         self.optimizer = optimizer_class(self.model.parameters(), **optimizer_kwargs)
 
@@ -284,17 +280,17 @@ class TrainEncodeDatasetModel(object):
         )
 
         self._validation_metrics = PerformanceMetrics(
-            lambda idx: self.dataloaders[0][0].dataset.dataset.target_features[idx],
+            lambda idx: self.dataloaders[0][0].dataset.target_features[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
         )
         self._baseline_validation_metrics = PerformanceMetrics(
-            lambda idx: self.dataloaders[0][0].dataset.dataset.target_features[idx],
+            lambda idx: self.dataloaders[0][0].dataset.target_features[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
         )
         self._test_metrics = PerformanceMetrics(
-            lambda idx: self.dataloaders[0][0].dataset.dataset.target_features[idx],
+            lambda idx: self.dataloaders[0][0].dataset.target_features[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
         )
@@ -393,6 +389,7 @@ class TrainEncodeDatasetModel(object):
             self.cur_fold = self.checkpoint_fold
             for _, (train_batch_loader, valid_batch_loader) in enumerate(self.dataloaders[self.checkpoint_fold:]):
                 print('epoch:', self.checkpoint_epoch, 'fold:', self.cur_fold)
+
                 # train
                 for batch in tqdm(train_batch_loader):
                     t_i = time()
@@ -548,10 +545,14 @@ class TrainEncodeDatasetModel(object):
             cell_type_batch = batch[1].to(self.device)
             targets = batch[2].to(self.device)
             target_mask = batch[3].to(self.device)
+            # print(target_mask.shape)
+            # print('target_mask:', target_mask.sum())
 
             # make train mask
             target_mask_tr = target_mask.clone()
-            target_mask_tr[:, self.ct_masks[self.cur_fold]] = False
+            target_mask_tr[:, self.ct_masks[self.cur_fold], :] = False
+            # print(target_mask_tr.shape)
+            # print('target_mask_tr:', target_mask_tr.sum())
 
             outputs = self.model(sequence_batch, cell_type_batch)
 
@@ -619,7 +620,8 @@ class TrainEncodeDatasetModel(object):
 
             # val mask
             target_mask_tr = target_mask.clone()
-            target_mask_tr[:, self.ct_masks[self.cur_fold]] = False
+            # !!!
+            target_mask_tr[:, self.ct_masks[self.cur_fold], :] = False
             target_mask_val = ~target_mask_tr
 
             # compute a baseline
@@ -1013,7 +1015,7 @@ class TrainEncodeDatasetModel(object):
 
     def _log_embeddings(self, step):
         embeddings = self.model.get_cell_type_embeddings()
-        cell_type_labels = self.dataloaders[0][0].dataset.dataset._cell_types
+        cell_type_labels = self.dataloaders[0][0].dataset._cell_types
         self._writer.add_embedding(
             embeddings, metadata=cell_type_labels, global_step=step
         )

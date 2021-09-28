@@ -116,7 +116,9 @@ class EncodeDataset(torch.utils.data.Dataset):
         strand="+",
         multi_ct_target=False,
         position_skip=1,
-    ):
+    ):  
+        # !!!
+        self.ct_means = np.load('results/ct_mean_targets_02.npy', allow_pickle=True)
         self.reference_sequence_path = reference_sequence_path
         self.reference_sequence = self._construct_ref_genome()
 
@@ -336,7 +338,8 @@ class EncodeDataset(torch.utils.data.Dataset):
         # !!!!!
         gen = torch.Generator()
         gen.manual_seed(int(position))
-        target_rand = torch.rand(target.shape, generator=gen)
+        target_rand = torch.bernoulli(torch.tensor(self.ct_means).unsqueeze(1), generator=gen)
+        # target_rand = torch.bernoulli(torch.rand(target.shape, generator=gen))
 
         return retrieved_seq, cell_type, target_rand, target_mask
 
