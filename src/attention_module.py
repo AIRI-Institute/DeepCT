@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import torch
 import torch.nn as nn
 
@@ -240,34 +242,34 @@ class MultiheadAttentionRPE(nn.Module):
         key_proj_size = self._key_size * self._num_heads
         embedding_size = self._value_size * self._num_heads
 
-        self._q_layer = nn.Linear(
+        self.q_layer = nn.Linear(
             n_channels,
             key_proj_size,
             bias=False,
         )
-        self._initializer(self._q_layer.weight)
+        self._initializer(self.q_layer.weight)
 
-        self._k_layer = nn.Linear(
+        self.k_layer = nn.Linear(
             n_channels,
             key_proj_size,
             bias=False,
         )
-        self._initializer(self._k_layer.weight)
+        self._initializer(self.k_layer.weight)
 
-        self._v_layer = nn.Linear(n_channels, embedding_size, bias=False)
-        self._initializer(self._v_layer.weight)
+        self.v_layer = nn.Linear(n_channels, embedding_size, bias=False)
+        self._initializer(self.v_layer.weight)
 
         w_init = nn.init.zeros_ if zero_initialize else self._initializer
-        self._embedding_layer = nn.Linear(embedding_size, embedding_size)
-        w_init(self._embedding_layer.weight)
-        w_init(self._embedding_layer.bias)
+        self.embedding_layer = nn.Linear(embedding_size, embedding_size)
+        w_init(self.embedding_layer.weight)
+        w_init(self.embedding_layer.bias)
 
         # Create additional layers if using relative positions.
         if self._relative_positions:
-            self._r_k_layer = nn.Linear(
+            self.r_k_layer = nn.Linear(
                 self._num_relative_position_features, key_proj_size, bias=False
             )
-            self._initializer(self._r_k_layer.weight)
+            self._initializer(self.r_k_layer.weight)
 
             self._r_w_bias = nn.Parameter(
                 torch.empty((1, self._num_heads, 1, self._key_size), dtype=torch.float)
@@ -279,8 +281,8 @@ class MultiheadAttentionRPE(nn.Module):
             )
             self._initializer(self._r_r_bias)
 
-            self._positional_dropout = nn.Dropout(p=self._positional_dropout_rate)
-            self._attention_dropout = nn.Dropout(p=self._attention_dropout_rate)
+            self.positional_dropout = nn.Dropout(p=self._positional_dropout_rate)
+            self.attention_dropout = nn.Dropout(p=self._attention_dropout_rate)
         self.sequence_length = sequence_length
         if self._relative_positions and self.sequence_length is not None:
             positional_encodings = self._positional_encodings(self.sequence_length)
@@ -327,9 +329,9 @@ class MultiheadAttentionRPE(nn.Module):
         embedding_size = self._value_size * self._num_heads
 
         # Compute q, k and v as multi-headed projections of the inputs.
-        q = self._multihead_output(self._q_layer, inputs)  # (N, H, L, K)
-        k = self._multihead_output(self._k_layer, inputs)  # (N, H, L, K)
-        v = self._multihead_output(self._v_layer, inputs)  # (N, H, L, V)
+        q = self._multihead_output(self.q_layer, inputs)  # (N, H, L, K)
+        k = self._multihead_output(self.k_layer, inputs)  # (N, H, L, K)
+        v = self._multihead_output(self.v_layer, inputs)  # (N, H, L, V)
 
         # Scale the query by the square-root of key size.
         if self._scaling:
@@ -345,13 +347,13 @@ class MultiheadAttentionRPE(nn.Module):
                 # print('Computing encodings')
                 # compute encodings for provided sequence length
                 positional_encodings = self._positional_encodings(seq_len).to(
-                    self._r_k_layer.weight.device
+                    self.r_k_layer.weight.device
                 )
 
-            positional_encodings = self._positional_dropout(positional_encodings)
+            positional_encodings = self.positional_dropout(positional_encodings)
 
             # (1, H, 2L - 1, K)
-            r_k = self._multihead_output(self._r_k_layer, positional_encodings)
+            r_k = self._multihead_output(self.r_k_layer, positional_encodings)
 
             # Add shifted relative logits to content logits.
             # (N, H, L, L)
@@ -366,7 +368,7 @@ class MultiheadAttentionRPE(nn.Module):
             logits = torch.matmul(q, k, transpose_b=True)
 
         weights = nn.functional.softmax(logits, dim=-1)
-        weights = self._attention_dropout(weights)
+        weights = self.attention_dropout(weights)
 
         # Transpose and reshape the output.
         output = torch.matmul(weights, v)  # (N, H, L, V)
@@ -378,7 +380,7 @@ class MultiheadAttentionRPE(nn.Module):
         attended_inputs = output_transpose.reshape(
             output_transpose.shape[0], output_transpose.shape[1], embedding_size
         )  # (N, L, H * V)
-        output = self._embedding_layer(attended_inputs)
+        output = self.embedding_layer(attended_inputs)
 
         return output
 
@@ -390,7 +392,17 @@ class TransformerBlock(nn.Module):
         in_channels = input_sample_shape[-1]
         mha = MultiheadAttentionRPE(n_channels=in_channels, **mha_kwargs)
         mha_dropout = nn.Dropout(p=dropout_rate)
-        self.mha_block = Residual(nn.Sequential(mha_ln, mha, mha_dropout))
+        self.mha_block = Residual(
+            nn.Sequential(
+                OrderedDict(
+                    [
+                        ("layer_norm", mha_ln),
+                        ("multihead_attention", mha),
+                        ("dropout", mha_dropout),
+                    ]
+                )
+            )
+        )
 
         mha_output_size = mha_kwargs["num_heads"] * mha_kwargs["value_size"]
         mlp_ln = nn.LayerNorm((*input_sample_shape[:-1], mha_output_size))
@@ -400,7 +412,16 @@ class TransformerBlock(nn.Module):
         mlp_linear2 = nn.Linear(channels * 2, channels)
         mlp_dropout2 = nn.Dropout(dropout_rate)
         self.mlp = nn.Sequential(
-            mlp_ln, mlp_linear1, mlp_dropout1, relu, mlp_linear2, mlp_dropout2
+            OrderedDict(
+                [
+                    ("layer_norm", mlp_ln),
+                    ("linear_1", mlp_linear1),
+                    ("dropout_1", mlp_dropout1),
+                    ("relu", relu),
+                    ("linear_2", mlp_linear2),
+                    ("dropout_2", mlp_dropout2),
+                ]
+            )
         )
 
     def forward(self, inputs):

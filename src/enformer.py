@@ -47,7 +47,12 @@ class Enformer(nn.Module):
         self.stem = stem(
             INPUT_CHANNELS, self.channels // 2, pooling_type=self.pooling_type
         )
-        self.conv_tower = conv_tower(self.channels // 2, self.channels, n_blocks=6)
+        self.conv_tower = conv_tower(
+            self.channels // 2,
+            self.channels,
+            n_blocks=6,
+            pooling_type=self.pooling_type,
+        )
         mha_kwargs = {
             "value_size": channels // num_heads,
             "key_size": 64,
@@ -164,6 +169,36 @@ def stem(
     pooling_type="attention",
     name_suffix="",
 ):
+    pad_size = conv_kernel // 2
+    conv = nn.Conv1d(in_channels, conv_out_channels, conv_kernel, padding=pad_size)
+
+    rconv = rconv_block(
+        in_channels=conv_out_channels,
+        out_channels=conv_out_channels,
+        kernel_size=rconv_kernel,
+    )
+
+    pool = pooling_module(pooling_type, kernel_size=2, n_channels=conv_out_channels)
+
+    return nn.Sequential(
+        OrderedDict(
+            [
+                (f"conv{name_suffix}", conv),
+                (f"rconv_block{name_suffix}", rconv),
+                (f"pooling{name_suffix}", pool),
+            ]
+        )
+    )
+
+
+def downres_block(
+    in_channels,
+    conv_out_channels,
+    conv_kernel=15,
+    rconv_kernel=1,
+    pooling_type="attention",
+    name_suffix="",
+):
     # conv_out_channels = n_channels // 2
     conv = conv_block(
         in_channels=in_channels,
@@ -190,42 +225,50 @@ def stem(
     )
 
 
-def conv_tower(in_channels, out_channels, n_blocks=6):
+def conv_tower(in_channels, out_channels, n_blocks=6, pooling_type="attention"):
     conv_channels = exponential_linspace_int(
-        start=in_channels, end=out_channels, num=n_blocks, divisible_by=128
+        start=in_channels, end=out_channels, num=n_blocks, divisible_by=64
     )
     conv_channels = [in_channels] + conv_channels
-    stems = OrderedDict(
+    downres_blocks = OrderedDict(
         [
             (
-                f"stem_{i + 1}",
-                stem(
+                f"downres_block_{i}",
+                downres_block(
                     conv_channels[i],
                     conv_channels[i + 1],
                     conv_kernel=5,
-                    name_suffix=f"_{i + 1}",
+                    pooling_type=pooling_type,
+                    # name_suffix=f"_{i}",
                 ),
             )
             for i in range(len(conv_channels) - 1)
         ]
     )
-    return nn.Sequential(stems)
+    return nn.Sequential(downres_blocks)
 
 
 def transformer(n_blocks, mha_kwargs, block_input_sample_shape, channels):
     blocks = [
-        TransformerBlock(block_input_sample_shape, channels, mha_kwargs)
+        (
+            f"transformer_block_{i}",
+            TransformerBlock(block_input_sample_shape, channels, mha_kwargs),
+        )
         for i in range(n_blocks)
     ]
-    return nn.Sequential(*blocks)
+    return nn.Sequential(OrderedDict(blocks))
 
 
 def pointwise_block(in_channels, crop_target_length, channels, dropout_rate=0.05):
     return nn.Sequential(
-        TargetLengthCrop1d(crop_target_length),
-        conv_block(in_channels, 2 * channels, kernel_size=1),
-        nn.Dropout(p=dropout_rate),
-        nn.GELU(),
+        OrderedDict(
+            [
+                ("crop", TargetLengthCrop1d(crop_target_length)),
+                ("conv_block", conv_block(in_channels, 2 * channels, kernel_size=1)),
+                ("dropout", nn.Dropout(p=dropout_rate)),
+                ("gelu", nn.GELU()),
+            ]
+        )
     )
 
 
