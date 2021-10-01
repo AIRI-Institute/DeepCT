@@ -1,3 +1,5 @@
+from itertools import starmap
+
 import numpy as np
 import torch
 
@@ -139,43 +141,163 @@ class ClipTargets(torch.nn.Module):
         return (*sample[:2], targets, sample[3])
 
 
-class quantitative2sigmoid(torch.nn.Module):
+class ArrayTransform(torch.nn.Module):
     """
-    Maps quantitative features to the interval -1...1 using sigmoid function
+    Abstract class allowing to apply same transform
+    to several arrays, typically predict, feature and target
+
+    should define function F which will be applied to arrayTransform
+
+    Parameters
+    ----------
+    transform_predictions, transform_targets, transform_masks: bool
+        define which arrays should be tranformed
+    """
+
+    def __init__(
+        self, transform_predictions=True, transform_targets=True, transform_masks=False
+    ):
+        super().__init__()
+        self.transform_predictions = transform_predictions
+        self.transform_targets = transform_targets
+        self.transform_masks = transform_masks
+
+    def F(self, input):
+        raise NotImplementedError(
+            "Classes that inherit from `ArrayTransform` must define this method"
+        )
+
+    def forward(self, inputs):
+        prediction, target, target_mask = inputs
+        if self.transform_predictions:
+            tr_prediction = self.F(prediction)
+        else:
+            tr_prediction = prediction
+
+        if self.transform_targets:
+            tr_target = self.F(target)
+        else:
+            tr_target = target
+
+        if self.transform_masks and target_mask is not None:
+            tr_target_mask = self.F(target_mask)
+        else:
+            tr_target_mask = target_mask
+
+        return tr_prediction, tr_target, tr_target_mask
+
+
+class Quantitative2Sigmoid(ArrayTransform):
+    """
+    Maps quantitative features to the interval 0...1 using sigmoid function
+
+    Parameters
+    ----------
+        threshold:  float
+        threshold substracted from feature values before applying sigmoid function.
+    """
+
+    def __init__(self, threshold=4.9, **kwargs):
+        super().__init__(**kwargs)
+        self.threshold = threshold
+
+    def F(self, x):
+        return map(lambda y: torch.sigmoid(y - self.threshold), x)
+
+
+class Quantitative2Qualitative(ArrayTransform):
+    """
+    Converts quantitative features to the binary (i.e. Yes/No) values
+    based on specific threshold, i.e. binary = input > threshold
+
+    Parameters
+    ----------
+    threshold:  float
+        threshold substracted from feature values before applying sigmoid function.
+    """
+
+    def __init__(self, threshold=4.9, **kwargs):
+        super().__init__(**kwargs)
+        self.threshold = threshold
+
+    def F(self, x):
+        return map(lambda y: y > self.threshold, x)
+
+
+class MeanAndDeviation2AbsolutePredication(ArrayTransform):
+    """
+    Convert targets from mean_positional_value and cell-type specific deviations
+    to the form of absolute cell-type specific value, i.e
+    result = mean_positional_value + cell-type specific deviations
+
+    Note that this will reshape output from
+    [batch_size,n_cell_types+1,n_features]
+    to
+    [batch_size,n_cell_types,n_features]
 
     Parameters
     ----------
     input:  np.ndarray
-        features to be converted.
-
-    threashold:  float
-        threashold substracted from feature values before applying sigmoid function.
+        predictions to be converted.
+    mean_scaling: float
+        multiply mean by mean_scaling value (default = 1)
+    deviation_scaling: float
+        multiply deviation by mean_deviation value (default = 1)
     """
 
-    def __init__(self, threashold=4.9):
-        super().__init__()
-        self.threashold = threashold
+    def __init__(self, mean_scaling=1, deviation_scaling=1, **kwargs):
+        super().__init__(**kwargs)
+        self._mean_scaling = mean_scaling
+        self._deviation_scaling = deviation_scaling
 
-    def forward(self, input):
-        return torch.sigmoid(input - self.threashold)
+    def mean_and_dev2value(self, prediction):
+        means = prediction[:, -1:, :] * self._mean_scaling
+        deviations = prediction[:, :-1, :] * self._deviation_scaling
+        return means + deviations
+
+    def F(self, x):
+        return map(self.mean_and_dev2value, x)
 
 
-class quantitative2qualitative(torch.nn.Module):
+class MeanAverageValueBasedPredictor(torch.nn.Module):
     """
-    Maps quantitative features to the interval -1...1 using sigmoid function
-
+    # infer predictions from target's mean positional values
+    # and replace predictions with these inferred values
+    # !!! WARNING !!!
+    # This is direct flow from targets
     Parameters
     ----------
-    input:  np.ndarray
-        features to be converted.
-
-    threashold:  float
-        threashold substracted from feature values before applying sigmoid function.
+    input:  TODO: add descritption
+        predictions to be converted.
     """
 
-    def __init__(self, threashold=4.9):
+    def __init__(self):
         super().__init__()
-        self.threashold = threashold
 
-    def forward(self, input):
-        return input > self.threashold
+    def forward(self, inputs):
+        def get_batch_MPV(target, target_mask):
+            num_cell_types = target.size()[1]
+            _mean_feature_value = torch.sum(
+                target * target_mask, 1, keepdim=True
+            ) / torch.sum(target_mask, 1, keepdim=True)
+            _mean_feature_value = _mean_feature_value.repeat(1, num_cell_types, 1)
+            return _mean_feature_value
+
+        _, target, target_mask = inputs
+        return starmap(get_batch_MPV, zip(target, target_mask)), target, target_mask
+
+
+class Concat_batches(ArrayTransform):
+    """
+    Concatenate all batches and convert to numpy array
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+
+    def F(self, x):
+        items = tuple(x)
+        if torch.is_tensor(items[0]):
+            items = tuple(map(lambda y: y.cpu().detach().numpy(), items))
+        result = np.concatenate(items)
+        return result
