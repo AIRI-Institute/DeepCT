@@ -245,16 +245,16 @@ class TrainEncodeDatasetModel(object):
 
         torch.set_num_threads(cpu_n_threads)
 
-        self.device = torch.device(device)
         self.data_parallel = data_parallel
-
         if self.data_parallel:
-            self.model = nn.DataParallel(model)
+            self.model = nn.DataParallel(model, device_ids=device, output_device=device[0])
+            self.device = self.model.device_ids[0]
             logger.debug("Wrapped model in DataParallel")
         else:
-            self.model.to(self.device)
-            self.criterion.to(self.device)
-            logger.debug(f"Set modules to use device {device}")
+            self.device = torch.device(device)
+        self.model.to(self.device)
+        self.criterion.to(self.device)
+        logger.debug(f"Set modules to use device {device}")
 
         os.makedirs(output_dir, exist_ok=True)
         self.output_dir = output_dir
@@ -471,6 +471,7 @@ class TrainEncodeDatasetModel(object):
             target_mask,
             loss.item(),
         )
+        return return_values
 
     def _update_and_log_lr_if_needed(self, total_steps, validation_loss=None, log=True):
         # torch.optim.lr_scheduler.ReduceLROnPlateau is the only scheduler

@@ -386,10 +386,9 @@ class MultiheadAttentionRPE(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, input_sample_shape, channels, mha_kwargs, dropout_rate=0.4):
+    def __init__(self, in_channels, channels, mha_kwargs, dropout_rate=0.4):
         super().__init__()
-        mha_ln = nn.LayerNorm(input_sample_shape)
-        in_channels = input_sample_shape[-1]
+        mha_ln = nn.LayerNorm(in_channels)
         mha = MultiheadAttentionRPE(n_channels=in_channels, **mha_kwargs)
         mha_dropout = nn.Dropout(p=dropout_rate)
         self.mha_block = Residual(
@@ -405,7 +404,7 @@ class TransformerBlock(nn.Module):
         )
 
         mha_output_size = mha_kwargs["num_heads"] * mha_kwargs["value_size"]
-        mlp_ln = nn.LayerNorm((*input_sample_shape[:-1], mha_output_size))
+        mlp_ln = nn.LayerNorm(mha_output_size)
         mlp_linear1 = nn.Linear(mha_output_size, channels * 2)
         mlp_dropout1 = nn.Dropout(dropout_rate)
         relu = nn.ReLU()

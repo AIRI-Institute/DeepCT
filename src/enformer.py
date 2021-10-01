@@ -1,7 +1,9 @@
 from collections import OrderedDict
+import os
 
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint, checkpoint_sequential
 
 from src.attention_module import TransformerBlock
 from src.enformer_utils import (
@@ -25,6 +27,7 @@ class Enformer(nn.Module):
     def __init__(
         self,
         channels=C,
+        n_downres_blocks=6,
         num_transformer_layers=11,
         num_heads=8,
         pooling_type="attention",
@@ -32,25 +35,29 @@ class Enformer(nn.Module):
         context_length=CONTEXT_LENGTH,
         output_channels=5313,
         n_cell_types=None,
+        multi_ct_output=True,
         cell_type_embedding_length=0,
     ):
         super().__init__()
         self.channels = channels
+        self.n_downres_blocks = n_downres_blocks
         self.num_transformer_layers = num_transformer_layers
         self.num_heads = num_heads
         self.pooling_type = pooling_type
         self.input_length = input_length
         self.n_cell_types = n_cell_types
+        self.multi_ct_output = multi_ct_output
         self.cell_type_embedding_length = cell_type_embedding_length
         self.output_channels = output_channels
 
         self.stem = stem(
             INPUT_CHANNELS, self.channels // 2, pooling_type=self.pooling_type
         )
+        
         self.conv_tower = conv_tower(
             self.channels // 2,
             self.channels,
-            n_blocks=6,
+            n_blocks=self.n_downres_blocks,
             pooling_type=self.pooling_type,
         )
         mha_kwargs = {
@@ -69,7 +76,7 @@ class Enformer(nn.Module):
         self.transformer = transformer(
             n_blocks=self.num_transformer_layers,
             mha_kwargs=mha_kwargs,
-            block_input_sample_shape=(self.input_length // 128, self.channels),
+            in_channels=self.channels,
             channels=self.channels,
         )
         self.target_length = (self.input_length - 2 * context_length) // BIN_SIZE
@@ -84,43 +91,82 @@ class Enformer(nn.Module):
         self.output_head = output_head(
             2 * self.channels + self.cell_type_embedding_length, self.output_channels
         )
+        
+        # hack for checkpointing
+        self.stem = ModuleWrapperIgnores2ndArg(self.stem)
+        self.dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
 
     def forward(self, x, *args):
         # N, C, L = x.shape
-        x = self.stem(x)  # (N, C // 2, L // 2)
-        x = self.conv_tower(x)  # (N, C, L // 128)
-        x.transpose_(-1, -2)  # (N, L // 128, C)
-        x = self.transformer(x)  # (N, L // 128, C)
-        x.transpose_(-1, -2)  # (N, C, L // 128)
-        x = self.pointwise_block(x)  # (N, 2C, TARGET_LENGTH)
+        x = checkpoint(self.stem, x, self.dummy_tensor)  # (N, C // 2, L // 2)
+        x = checkpoint_sequential(self.conv_tower, self.n_downres_blocks, x)  # (N, C, L // 128)
+        x = x.transpose(-1, -2)  # (N, L // 128, C)
+        x = checkpoint_sequential(self.transformer, self.num_transformer_layers, x)  # (N, L // 128, C)
+        x = x.transpose(-1, -2)  # (N, C, L // 128)
+        x = checkpoint(self.pointwise_block, x)  # (N, 2C, TARGET_LENGTH)
         if self.n_cell_types is not None:
-            batch_size = x.shape[0]
-            cell_type_one_hots = torch.eye(self.n_cell_types, device=x.device)
+            if self.multi_ct_output:
+                output_cat_size = (
+                    x.shape[0] * self.n_cell_types, 
+                    x.shape[1] + self.cell_type_embedding_length, 
+                    x.shape[-1]
+                )
+                cell_type_one_hots = torch.eye(self.n_cell_types, device=x.device)
+            else:
+                output_cat_size = (
+                    x.shape[0], 
+                    x.shape[1] + self.cell_type_embedding_length, 
+                    x.shape[-1]
+                )
+                cell_type_one_hots = args[0]
+            
+            output_cat = torch.empty(*output_cat_size, dtype=x.dtype, device=x.device)
+            
             cell_type_embeddings = self.cell_type_net(cell_type_one_hots)
-
-            # Repeat cell type embeddings to fit sequence embeddings.
-            # E.g., with batch size of 3, 2 cell types, and [ct0_emb, ct1_emb]
-            # cell type embeddings, the embeddings will be converted to
-            # [ct0_emb, ct1_emb, ct0_emb, ct1_emb, ct0_emb, ct1_emb].
-            cell_type_embeddings = cell_type_embeddings.repeat(batch_size, 1)
             # Broadcast cell type embeddings to TARGET_LENGTH for concatenation with output
-            cell_type_embeddings = cell_type_embeddings.repeat(
-                self.target_length, 1, 1
-            ).permute(1, 2, 0)
+            cell_type_embeddings = cell_type_embeddings.unsqueeze(2).repeat(1, 1, 896)
 
-            # Repeat each sequence embedding to fit cell type embeddings.
-            # E.g., with 2 cell types, [seq0_emb, seq1_emb, seq2_emb] becomes
-            # [seq0_emb, seq0_emb, seq1_emb, seq1_emb, seq2_emb, seq2_emb]
-            seq_embeddings = x.repeat_interleave(self.n_cell_types, dim=0)
-            x = torch.cat(
-                [seq_embeddings, cell_type_embeddings], dim=1
-            )  # (N * n_cell_types, 2C + cell_type_embedding_length, TARGET_LENGTH)
+            if self.multi_ct_output:
+                batch_size = x.shape[0]
+                """
+                # This hack saves a lot of GPU memory, 
+                # but significantly increases `loss.backward()` time
 
-        x.transpose_(-1, -2)  # (N, TARGET_LENGTH, 2C)
+                #cell_type_embeddings = cell_type_embeddings.unsqueeze(2).repeat(1, 1, 896)
+                # Avoid using `torch.tensor.repeat` not to use additional GPU memory
+                for i in range(batch_size):
+                    for j in range(self.n_cell_types):
+                        sample_idx = i * self.n_cell_types + j
+                        output_cat[sample_idx, :x.shape[1], :] = x[i]
+                        for k in range(self.target_length):
+                            output_cat[sample_idx, x.shape[1]:, k] = cell_type_embeddings[j, :]
+                x = output_cat
+                """
+                # Repeat cell type embeddings to fit sequence embeddings.
+                # E.g., with batch size of 3, 2 cell types, and [ct0_emb, ct1_emb]
+                # cell type embeddings, the embeddings will be converted to
+                # [ct0_emb, ct1_emb, ct0_emb, ct1_emb, ct0_emb, ct1_emb].
+                cell_type_embeddings = cell_type_embeddings.repeat(batch_size, 1, 1)
+
+                # Repeat each sequence embedding to fit cell type embeddings.
+                # E.g., with 2 cell types, [seq0_emb, seq1_emb, seq2_emb] becomes
+                # [seq0_emb, seq0_emb, seq1_emb, seq1_emb, seq2_emb, seq2_emb]
+                x = x.repeat_interleave(self.n_cell_types, dim=0)
+
+            output_cat[:, :x.shape[1], :] = x
+            output_cat[:, x.shape[1]:, :] = cell_type_embeddings
+            x = output_cat
+
+        x = x.transpose(-1, -2)  # (N, TARGET_LENGTH, 2C)
         x = self.output_head(x)  # (N, TARGET_LENGTH, output_channels)
-        return x.view(
-            -1, self.n_cell_types, self.target_length, self.output_channels
-        )  # ()
+        if self.multi_ct_output:
+            return x.view(
+                -1, self.n_cell_types, self.target_length, self.output_channels
+            )
+        else:
+            return x.view(
+                -1, self.target_length, self.output_channels
+            ) 
 
     def get_cell_type_embeddings(self):
         """Retrieve cell type embeddings learned by the model."""
@@ -130,6 +176,17 @@ class Enformer(nn.Module):
             all_cell_types = torch.eye(self.n_cell_types).to(device)
             embeddings = self.cell_type_net(all_cell_types)
         return embeddings.detach().cpu()
+
+
+class ModuleWrapperIgnores2ndArg(nn.Module):
+    def __init__(self, module):
+        super().__init__()
+        self.module = module
+
+    def forward(self,x, dummy_arg=None):
+        assert dummy_arg is not None
+        x = self.module(x)
+        return x
 
 
 def conv_block(in_channels, out_channels, kernel_size):
@@ -227,7 +284,7 @@ def downres_block(
 
 def conv_tower(in_channels, out_channels, n_blocks=6, pooling_type="attention"):
     conv_channels = exponential_linspace_int(
-        start=in_channels, end=out_channels, num=n_blocks, divisible_by=64
+        start=in_channels, end=out_channels, num=n_blocks, divisible_by=128
     )
     conv_channels = [in_channels] + conv_channels
     downres_blocks = OrderedDict(
@@ -248,11 +305,11 @@ def conv_tower(in_channels, out_channels, n_blocks=6, pooling_type="attention"):
     return nn.Sequential(downres_blocks)
 
 
-def transformer(n_blocks, mha_kwargs, block_input_sample_shape, channels):
+def transformer(n_blocks, mha_kwargs, in_channels, channels):
     blocks = [
         (
             f"transformer_block_{i}",
-            TransformerBlock(block_input_sample_shape, channels, mha_kwargs),
+            TransformerBlock(in_channels, channels, mha_kwargs),
         )
         for i in range(n_blocks)
     ]

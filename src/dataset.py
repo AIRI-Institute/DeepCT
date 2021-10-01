@@ -234,7 +234,8 @@ class EncodeDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         if self.samples_mode:
-            retrieved_sample = self._retrieve_sample_by_idx(idx)
+            sample_idx, cell_type_idx = self._get_sample_cell_by_idx(idx)
+            retrieved_sample = self._retrieve_sample_by_idx(sample_idx, cell_type_idx)
         else:
             chrom, pos, cell_type_idx = self._get_chrom_pos_cell_by_idx(idx)
             retrieved_sample = self._retrieve(chrom, pos, cell_type_idx)
@@ -245,21 +246,28 @@ class EncodeDataset(torch.utils.data.Dataset):
         retrieved_seq = retrieved_sample[0]
         retrieved_target = retrieved_sample[2]
         return retrieved_seq, retrieved_target
+    
+    def _get_sample_cell_by_idx(self, idx):
+        if self.cell_wise and not self.multi_ct_target:
+            cell_type_idx = idx % self.n_cell_types
+            sample_idx = idx // self.n_cell_types
+        else:
+            cell_type_idx = 0
+            sample_idx = idx
+        return sample_idx, cell_type_idx
 
-    def _retrieve_sample_by_idx(self, idx):
-        chrom, start, end, sample_idx = self.samples[idx]
+    def _retrieve_sample_by_idx(self, sample_idx, cell_type_idx):
+        chrom, start, end, sample_idx = self.samples[sample_idx]
         context = self.sequence_length - (end - start)
         if context != 0:
             start -= context // 2
             end += context // 2 + context % 2
-
         track_vector = self.target.get_feature_data(chrom, sample_idx)
-        target, target_mask, cell_type = self._track_vector_to_target(track_vector)
+        target, target_mask, cell_type = self._track_vector_to_target(track_vector, cell_type_idx)
 
         retrieved_seq = self.reference_sequence.get_encoding_from_coords(
             chrom, start, end, self.strand
         )
-        cell_type = 0.0
 
         return retrieved_seq, cell_type, target, target_mask
 
@@ -333,7 +341,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         bin_end = position + self._end_radius
         track_vector = self.target.get_feature_data(chrom, bin_start, bin_end)
 
-        target, target_mask, cell_type = self._track_vector_to_target(track_vector)
+        target, target_mask, cell_type = self._track_vector_to_target(track_vector, cell_type_idx)
 
         window_start = bin_start - self._surrounding_sequence_radius
         window_end = bin_end + self._surrounding_sequence_radius
@@ -347,7 +355,7 @@ class EncodeDataset(torch.utils.data.Dataset):
 
         return retrieved_seq, cell_type, target, target_mask
 
-    def _track_vector_to_target(self, track_vector):
+    def _track_vector_to_target(self, track_vector, cell_type_idx=None):
         if self.cell_wise:
             if self.multi_ct_target:
                 target = []
@@ -362,7 +370,7 @@ class EncodeDataset(torch.utils.data.Dataset):
                 cell_type = 0.0
             else:
                 target_idx = self._feature_indices_by_cell_type_index[cell_type_idx]
-                target = track_vector[target_idx].astype(np.float32)
+                target = track_vector[..., target_idx].astype(np.float32)
                 target_mask = target_idx != _FEATURE_NOT_PRESENT
                 cell_type = np.zeros(self.n_cell_types, dtype=np.float32)
                 cell_type[cell_type_idx] = 1
