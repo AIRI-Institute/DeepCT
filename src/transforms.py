@@ -162,6 +162,11 @@ class ArrayTransform(torch.nn.Module):
         self.transform_targets = transform_targets
         self.transform_masks = transform_masks
 
+    def F(self, input):
+        raise NotImplementedError(
+            "Classes that inherit from `ArrayTransform` must define this method"
+        )
+
     def forward(self, inputs):
         prediction, target, target_mask = inputs
         if self.transform_predictions:
@@ -195,7 +200,9 @@ class Quantitative2Sigmoid(ArrayTransform):
     def __init__(self, threshold=4.9, **kwargs):
         super().__init__(**kwargs)
         self.threshold = threshold
-        self.F = lambda x: map(lambda y: torch.sigmoid(y - self.threshold), x)
+
+    def F(self, x):
+        return map(lambda y: torch.sigmoid(y - self.threshold), x)
 
 
 class Quantitative2Qualitative(ArrayTransform):
@@ -212,7 +219,9 @@ class Quantitative2Qualitative(ArrayTransform):
     def __init__(self, threshold=4.9, **kwargs):
         super().__init__(**kwargs)
         self.threshold = threshold
-        self.F = lambda x: map(lambda y: y > self.threshold, x)
+
+    def F(self, x):
+        return map(lambda y: y > self.threshold, x)
 
 
 class MeanAndDeviation2AbsolutePredication(ArrayTransform):
@@ -241,12 +250,13 @@ class MeanAndDeviation2AbsolutePredication(ArrayTransform):
         self._mean_scaling = mean_scaling
         self._deviation_scaling = deviation_scaling
 
-        def F(prediction):
-            means = prediction[:, -1:, :] * self._mean_scaling
-            deviations = prediction[:, :-1, :] * self._deviation_scaling
-            return means + deviations
+    def mean_and_dev2value(self, prediction):
+        means = prediction[:, -1:, :] * self._mean_scaling
+        deviations = prediction[:, :-1, :] * self._deviation_scaling
+        return means + deviations
 
-        self.F = lambda x: map(F, x)
+    def F(self, x):
+        return map(self.mean_and_dev2value, x)
 
 
 class MeanAverageValueBasedPredictor(torch.nn.Module):
@@ -285,11 +295,9 @@ class Concat_batches(ArrayTransform):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
-        def F(x):
-            items = tuple(x)
-            if torch.is_tensor(items[0]):
-                items = tuple(map(lambda y: y.cpu().detach().numpy(), items))
-            result = np.concatenate(items)
-            return result
-
-        self.F = F
+    def F(self, x):
+        items = tuple(x)
+        if torch.is_tensor(items[0]):
+            items = tuple(map(lambda y: y.cpu().detach().numpy(), items))
+        result = np.concatenate(items)
+        return result

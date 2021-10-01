@@ -116,8 +116,10 @@ class WeightedMSELossWithMPI(WeightedMSELoss):
     mean_predicted[k] is predicted mean of feature k across cell types,
     deviation[n,k] is predicted deviation from mean_predicted[k] of feature k in cell type n
     then loss is
-    alpha * mean ( (nanmean(A[:,k]) - mean_predicted[k] )**2 ) +
-    (1-alpha) * mean (A[k,n]/nanmean(A[:,k] - deviation_predicted[k,n])
+    alpha * mean ( (mean(A[:,k]) - mean_predicted[k])**2 ) +
+    (1-alpha) * mean (
+            ( A[n,k] - mean (A[:,k]) ) - deviation_predicted[n,k]) )**2
+                )
 
     .. math::
     Shape:
