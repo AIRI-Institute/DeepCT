@@ -55,22 +55,18 @@ class WeightedMSELoss(MSELoss):
     r"""Creates a criterion that measures the mean squared error between
     `n` elements in the input `x` and target `y` weighted by weight `c`.
     Note that loss is averaged, i.e. loss = mean( (x[i] - y[i])^2 * c[i] )
-
     The loss can be described as:
-
     .. math::
     Shape:
         - Input: :math:`(N, *)` where `*` means, any number of additional
           dimensions
         - Target: :math:`(N, *)`, same shape as the input
-
     weight: str or array(float) or None
         either tensor of weights or path to file where i-th line
         contains value of i-th element of weights vector
         if weight is None no error will be raised but one would need
         to update it's value before computing loss
     Examples::
-
         >>> loss = nn.MSELoss(weight=[1,2,3,4,5])
         >>> input = torch.randn(3, 5, requires_grad=True)
         >>> target = torch.randn(3, 5)
@@ -120,13 +116,11 @@ class WeightedMSELossWithMPI(WeightedMSELoss):
     (1-alpha) * mean (
             ( A[n,k] - mean (A[:,k]) ) - deviation_predicted[n,k]) )**2
                 )
-
     .. math::
     Shape:
         - Input: :math:`(N, *)` where `*` means, any number of additional
           dimensions
         - Target: :math:`(N, *)`, same shape as the input
-
     weight: str or array(float) or None
         either tensor of weights or path to file where i-th line
         contains value of i-th element of weights vector

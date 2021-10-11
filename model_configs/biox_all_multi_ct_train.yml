@@ -26,6 +26,9 @@ dataset: {
     path: src/dataset.py,
     class: EncodeDataset,
     sampler_class: LargeRandomSampler,
+    train_sample_args: {replacement: False},
+    validation_sampler_class: SubsetRandomSampler,
+    validation_sampler_args: {num_samples: 6400},
 
     distinct_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/distinct_features.txt,
     target_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/target_features.txt,

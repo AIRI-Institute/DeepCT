@@ -104,7 +104,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         self,
         reference_sequence_path,
         target_path,
-        distinct_features,  # TODO: rename as "tracks"
+        distinct_features,
         target_features,
         intervals,
         quantitative_features=False,
@@ -116,7 +116,9 @@ class EncodeDataset(torch.utils.data.Dataset):
         strand="+",
         multi_ct_target=False,
         position_skip=1,
-    ):
+    ):  
+        # !!!
+        self.ct_means = np.load('results/ct_mean_targets_02.npy', allow_pickle=True)
         self.reference_sequence_path = reference_sequence_path
         self.reference_sequence = self._construct_ref_genome()
 
@@ -291,10 +293,11 @@ class EncodeDataset(torch.utils.data.Dataset):
             in the given dataset for a given cell type.
 
         """
+        # !!!
         bin_start = position - self._start_radius
         bin_end = position + self._end_radius
         targets = self.target.get_feature_data(chrom, bin_start, bin_end)
-
+        
         if self.cell_wise:
             if self.multi_ct_target:
                 target = []
@@ -304,6 +307,7 @@ class EncodeDataset(torch.utils.data.Dataset):
                     ]
                     ct_target = targets[ct_target_idx].astype(np.float32)
                     target.append(ct_target)
+                
                 target = np.array(target).astype(np.float32)
                 target_mask = self.target_mask
                 cell_type = 0.0
@@ -321,6 +325,9 @@ class EncodeDataset(torch.utils.data.Dataset):
         window_start = bin_start - self._surrounding_sequence_radius
         window_end = bin_end + self._surrounding_sequence_radius
 
+        # window_start = bin_start - 1555 - self._surrounding_sequence_radius
+        # window_end = bin_end - 1555 + self._surrounding_sequence_radius
+
         retrieved_seq = self.reference_sequence.get_encoding_from_coords(
             chrom, window_start, window_end, self.strand
         )
@@ -328,7 +335,13 @@ class EncodeDataset(torch.utils.data.Dataset):
         if not self._check_retrieved_sequence(retrieved_seq, chrom, position):
             return None
 
-        return retrieved_seq, cell_type, target, target_mask
+        # !!!!!
+        gen = torch.Generator()
+        gen.manual_seed(int(position))
+        target_rand = torch.bernoulli(torch.tensor(self.ct_means).unsqueeze(1), generator=gen)
+        # target_rand = torch.bernoulli(torch.rand(target.shape, generator=gen))
+
+        return retrieved_seq, cell_type, target_rand, target_mask
 
     def _check_retrieved_sequence(self, sequence, chrom, position) -> bool:
         """Checks whether retrieved sequence is acceptable.
@@ -536,10 +549,54 @@ class SubsetRandomSampler(torch.utils.data.SubsetRandomSampler):
         ).tolist()
 
 
+# class CustomSubset(EncodeDataset):
+#     """
+#     Subset of a dataset at specified indices.
+
+#     Arguments:
+#         dataset (Dataset): The whole Dataset
+#         indices (sequence): Indices in the whole set selected for subset
+#         labels(sequence) : targets as required for the indices. will be the same length as indices
+#     """
+#     def __init__(self, dataset, indices):
+        
+#         self.dataset = dataset
+#         self.indices = indices
+#         super(CustomSubset, self).__init__(dataset, indices)
+#         # self.reference_sequence_path=self.dataset.reference_sequence_path,
+#         # self.target_path=self.dataset.target_path,
+#         # self.distinct_features=self.dataset.distinct_features,
+#         # self.target_features=self.dataset.target_features,
+#         # self.intervals=self.dataset.intervals,
+#         self.sub_dataset = torch.utils.data.Subset(dataset, indices)
+
+#     def __getitem__(self, idx):
+#         retrieved_sample = self.sub_dataset[idx]
+#         return retrieved_sample
+
+#     def __len__(self):
+#         return len(self.indices)
+
+
 def encode_worker_init_fn(worker_id):
     """Initialization function for multi-processing DataLoader worker"""
     worker_info = torch.utils.data.get_worker_info()
     dataset = worker_info.dataset
+    # reconstruct reference genome object
+    # because it reads from fasta `pyfaidx`
+    # which is not multiprocessing-safe, see:
+    # https://github.com/mdshw5/pyfaidx/issues/167#issuecomment-667591513
+    dataset.reference_sequence = dataset._construct_ref_genome()
+    # and similarly for targets (as they use bigWig file handlers)
+    # which are not multiprocessing-safe, see
+    # see https://github.com/deeptools/pyBigWig/issues/74#issuecomment-439520821
+    dataset.target = dataset._construct_target(dataset.quantitative_features)
+
+
+def subset_encode_worker_init_fn(worker_id):
+    """Initialization function for multi-processing DataLoader worker"""
+    worker_info = torch.utils.data.get_worker_info()
+    dataset = worker_info.dataset.dataset  # subset class
     # reconstruct reference genome object
     # because it reads from fasta `pyfaidx`
     # which is not multiprocessing-safe, see:

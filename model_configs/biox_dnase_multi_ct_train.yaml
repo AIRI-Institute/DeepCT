@@ -1,10 +1,10 @@
 ---
-ops: [evaluate]
+ops: [train, evaluate]
 lr: 0.0001
 lr_scheduler: {
     class: !import torch.optim.lr_scheduler.CosineAnnealingLR,
     class_args: {
-        T_max: 411380,
+        T_max: 1431450,
     }
 }
 model: {
@@ -12,27 +12,30 @@ model: {
     class: DeepCT,
     class_args: {
         sequence_length: 1000,
-        n_cell_types: 125,
+        n_cell_types: 631,
         sequence_embedding_length: 256,
         cell_type_embedding_length: 32,
         final_embedding_length: 256,
         n_genomic_features: 1,
     }
 }
+criterion: !obj:torch.nn.BCEWithLogitsLoss {
+    reduction: 'sum',
+}
 dataset: {
     path: src/dataset.py,
     class: EncodeDataset,
     sampler_class: LargeRandomSampler,
 
-    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/dnase/distinct_features.txt,
-    target_features_path: /mnt/datasets/DeepCT/dataset_data/dnase/target_features.txt,
-    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/dnase/target_intervals.bed,
+    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/dnase/distinct_features.txt,
+    target_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/dnase/target_features.txt,
+    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/dnase/target_intervals.bed,
     test_holdout: [chr8, chr9],
     validation_holdout: [chr6, chr7],
     
     dataset_args: {
         reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
-        target_path: /mnt/datasets/DeepCT/dataset_data/dnase/sorted_data.bed.gz,
+        target_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/dnase/sorted_data.bed.gz,
         cell_wise: True,
         multi_ct_target: True,
         sequence_length: 1000,
@@ -41,7 +44,7 @@ dataset: {
         position_skip: 120,
     },
     loader_args: {
-        batch_size: 128,
+        batch_size: 256,
         num_workers: 16,
     },
     train_transform: !obj:torchvision.transforms.Compose {
@@ -53,20 +56,27 @@ dataset: {
         ],
     }
 }
-evaluate_model: !obj:src.evaluation.evaluate_encode_dataset.EvaluateModel {
-    trained_model_path: /home/msindeeva/DeepCT/DeepCT_outputs/encode/ct_v2/dnase/multi_ct/AdamW_COS_LR0001/2021-04-27-13-37-01/best_model.pth.tar,
+train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
+    n_epochs: 10,
+    report_stats_every_n_steps: 8000,
+    save_checkpoint_every_n_steps: 2000,
+    log_embeddings_every_n_steps: 8000,
     report_gt_feature_n_positives: 10,
-    device: 'cuda:0',
+    device: 'cuda:3',
     data_parallel: False,
-    log_cell_type_embeddings_to_tensorboard: True,
+    logging_verbosity: 2,
     metrics: {
-        accuracy: !import src.metrics.accuracy_score,
+#        accuracy: !import src.metrics.accuracy_score,
         average_precision: !import sklearn.metrics.average_precision_score,
-        f1: !import src.metrics.f1_score,
-        precision: !import src.metrics.precision_score,
-        recall: !import src.metrics.recall_score,
-        roc_auc: !import sklearn.metrics.roc_auc_score,
+#        f1: !import src.metrics.f1_score,
+#        precision: !import src.metrics.precision_score,
+#        recall: !import src.metrics.recall_score,
+#        roc_auc: !import sklearn.metrics.roc_auc_score,
     },
+    log_confusion_matrix: False,
 }
+output_dir: DeepCT_outputs/biox/ct_v2/dnase/multi_ct/AdamW_COS_LR0001
+
 random_seed: 1447
+create_subdirectory: True
 ...
