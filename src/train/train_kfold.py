@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import shutil
+import random
 from time import strftime, time
 import itertools
 import numpy as np
@@ -197,7 +198,7 @@ class TrainEncodeDatasetModel(object):
         dataloaders,
         n_epochs,
         checkpoint_epoch,
-        checkpoint_fold,
+        checkpoint_chunk,
         checkpoint_resume,
         report_stats_every_n_steps,
         output_dir,
@@ -221,7 +222,7 @@ class TrainEncodeDatasetModel(object):
         self.model = model
         self.checkpoint_resume = checkpoint_resume
         self.checkpoint_epoch = checkpoint_epoch
-        self.checkpoint_fold = checkpoint_fold
+        self.checkpoint_chunk = checkpoint_chunk
         # self.n_folds = n_folds  # self.cfg["dataset"]["dataset_args"]["n_folds"]
         self.n_cell_types = n_cell_types  # self.cfg["dataset"]["dataset_args"]["n_cell_types"]
         # self.fold = fold  # self.cfg["dataset"]["dataset_args"]["fold"]
@@ -381,58 +382,69 @@ class TrainEncodeDatasetModel(object):
         report_train_predictions = []
         report_train_targets = []
         report_train_target_masks = [] 
+        
+        # get {dataloaders: masks} dict
+        fold_map = {}
+        for i in range(len(self.dataloaders)):
+            fold_map[self.dataloaders[i]] = self.ct_masks[i]
+
 
         if self.checkpoint_resume is not None:
 
-            print(f'Start training from {self.checkpoint_epoch} epoch, fold {self.checkpoint_fold}')
+            print(f'Start training from {self.checkpoint_epoch} epoch, chunk {self.checkpoint_chunk}')
 
-            self.cur_fold = self.checkpoint_fold
-            for _, (train_batch_loader, valid_batch_loader) in enumerate(self.dataloaders[self.checkpoint_fold:]):
-                print('epoch:', self.checkpoint_epoch, 'fold:', self.cur_fold)
-
-                # train
-                for batch in tqdm(train_batch_loader):
-                    t_i = time()
-                    prediction, target, target_mask, loss = self.train(batch)
-                    t_f = time()
-                    time_per_batch.append(t_f - t_i)
-                    report_train_losses.append(loss)
-                    report_train_predictions.append(prediction)
-                    report_train_targets.append(target)
-                    if self.masked_targets:
-                        report_train_target_masks.append(target_mask)
-                    total_steps += 1
-                    self._update_and_log_lr_if_needed(total_steps)
+            # shuffle loaders
+            random.seed(666 + self.checkpoint_epoch)
+            l = list(fold_map.items())
+            for chunk, ((train_batch_loader, valid_batch_loader), current_ct_mask) in enumerate(dict(random.sample(l, len(fold_map.keys()))).items()):
                 
-                # метрики на train для отчета
-                self._log_train_metrics_and_clean_cache(
-                    self.checkpoint_epoch,
-                    total_steps,
-                    time_per_batch,
-                    report_train_losses,
-                    report_train_predictions,
-                    report_train_targets,
-                    report_train_target_masks,
-                )
+                if chunk >= self.checkpoint_chunk:
+                    print('epoch:', self.checkpoint_epoch, 'data chunk:', chunk)
 
-                # val
-                validation_loss = self._validate_and_log_metrics(
-                    val_loader=valid_batch_loader, 
-                    step=total_steps
+                    self.current_ct_mask = current_ct_mask
+
+                    # train
+                    for batch in tqdm(train_batch_loader):
+                        t_i = time()
+                        prediction, target, target_mask, loss = self.train(batch)
+                        t_f = time()
+                        time_per_batch.append(t_f - t_i)
+                        report_train_losses.append(loss)
+                        report_train_predictions.append(prediction)
+                        report_train_targets.append(target)
+                        if self.masked_targets:
+                            report_train_target_masks.append(target_mask)
+                        total_steps += 1
+                        self._update_and_log_lr_if_needed(total_steps)
+                    
+                    # метрики на train для отчета
+                    self._log_train_metrics_and_clean_cache(
+                        self.checkpoint_epoch,
+                        total_steps,
+                        time_per_batch,
+                        report_train_losses,
+                        report_train_predictions,
+                        report_train_targets,
+                        report_train_target_masks,
                     )
-                
-                self._update_and_log_lr_if_needed(
-                    total_steps, math.ceil(validation_loss * 1000.0) / 1000.0
-                )
 
-                if validation_loss < min_loss:
-                    min_loss = validation_loss
-                    self._save_checkpoint(total_steps, min_loss, is_best=True)
-                    logger.info("Updating `best_model.pth.tar`")
+                    # val
+                    validation_loss = self._validate_and_log_metrics(
+                        val_loader=valid_batch_loader, 
+                        step=total_steps
+                        )
+                    
+                    self._update_and_log_lr_if_needed(
+                        total_steps, math.ceil(validation_loss * 1000.0) / 1000.0
+                    )
 
-                self._writer.add_scalar("fold", self.cur_fold, total_steps)
+                    if validation_loss < min_loss:
+                        min_loss = validation_loss
+                        self._save_checkpoint(total_steps, min_loss, is_best=True)
+                        logger.info("Updating `best_model.pth.tar`")
 
-                self.cur_fold += 1
+                    self._writer.add_scalar("data chunk", chunk, total_steps)
+
 
             # if total_steps % self.nth_step_save_checkpoint == 0:
             checkpoint_basename = "checkpoint"
@@ -454,13 +466,19 @@ class TrainEncodeDatasetModel(object):
             self._log_embeddings(total_steps)
 
             self.checkpoint_epoch += 1
-
             print(f'Epoch from checkpoint completed; Start {self.checkpoint_epoch} epoch')
 
+        # main train/val loop
         for epoch in tqdm(range(self.checkpoint_epoch, self.n_epochs)):
-            for fold, (train_batch_loader, valid_batch_loader) in enumerate(self.dataloaders):
-                self.cur_fold = fold
-                print('epoch:', epoch, 'fold:', self.cur_fold)
+
+            # shuffle loaders
+            random.seed(666 + epoch)
+            l = list(fold_map.items())
+            for chunk, ((train_batch_loader, valid_batch_loader), current_ct_mask) in enumerate(dict(random.sample(l, len(fold_map.keys()))).items()):
+
+                self.current_ct_mask = current_ct_mask
+
+                print('epoch:', epoch, 'data chunk:', chunk)
 
                 # train
                 for batch in tqdm(train_batch_loader):
@@ -502,7 +520,7 @@ class TrainEncodeDatasetModel(object):
                     self._save_checkpoint(total_steps, min_loss, is_best=True)
                     logger.info("Updating `best_model.pth.tar`")
 
-                self._writer.add_scalar("fold", self.cur_fold, total_steps)
+                self._writer.add_scalar("data chunk", chunk, total_steps)
 
             # if total_steps % self.nth_step_save_checkpoint == 0:
             checkpoint_basename = "checkpoint"
@@ -545,14 +563,10 @@ class TrainEncodeDatasetModel(object):
             cell_type_batch = batch[1].to(self.device)
             targets = batch[2].to(self.device)
             target_mask = batch[3].to(self.device)
-            # print(target_mask.shape)
-            # print('target_mask:', target_mask.sum())
 
             # make train mask
             target_mask_tr = target_mask.clone()
-            target_mask_tr[:, self.ct_masks[self.cur_fold], :] = False
-            # print(target_mask_tr.shape)
-            # print('target_mask_tr:', target_mask_tr.sum())
+            target_mask_tr[:, self.current_ct_mask, :] = False
 
             outputs = self.model(sequence_batch, cell_type_batch)
 
@@ -621,7 +635,7 @@ class TrainEncodeDatasetModel(object):
             # val mask
             target_mask_tr = target_mask.clone()
             # !!!
-            target_mask_tr[:, self.ct_masks[self.cur_fold], :] = False
+            target_mask_tr[:, self.current_ct_mask, :] = False
             target_mask_val = ~target_mask_tr
 
             # compute a baseline

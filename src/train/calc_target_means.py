@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 # import torch
 # from torch import nn
 from selene_sdk.utils import load_path, parse_configs_and_run
-from selene_sdk.utils.config_utils import module_from_dir, module_from_file
+from selene_sdk.utils.config_utils import module_from_dir, module_from_file, get_full_dataset
 from selene_sdk.utils.config import instantiate
 from src.dataset import EncodeDataset, LargeRandomSampler, encode_worker_init_fn
 from src.transforms import *
@@ -37,21 +37,23 @@ def get_full_dl(configs):
         dataset_info = configs["dataset"]
 
         # all intervals
-        genome_intervals = []
-        with open(dataset_info["sampling_intervals_path"])  as f:
-            for line in f:
-                chrom, start, end = interval_from_line(line)
-                genome_intervals.append((chrom, start, end))
+        # genome_intervals = []
+        # with open(dataset_info["sampling_intervals_path"])  as f:
+        #     for line in f:
+        #         chrom, start, end = interval_from_line(line)
+
+        #         if chrom not in dataset_info["test_holdout"]:
+        #             genome_intervals.append((chrom, start, end))
 
         # bedug
         # genome_intervals = random.sample(genome_intervals, k=20)
         # print("DEBUG MODE ON:", len(genome_intervals))
 
-        with open(dataset_info["distinct_features_path"]) as f:
-            distinct_features = list(map(lambda x: x.rstrip(), f.readlines()))
+        # with open(dataset_info["distinct_features_path"]) as f:
+        #     distinct_features = list(map(lambda x: x.rstrip(), f.readlines()))
 
-        with open(dataset_info["target_features_path"]) as f:
-            target_features = list(map(lambda x: x.rstrip(), f.readlines()))
+        # with open(dataset_info["target_features_path"]) as f:
+        #     target_features = list(map(lambda x: x.rstrip(), f.readlines()))
 
         module = None
         if os.path.isdir(dataset_info["path"]):
@@ -59,23 +61,23 @@ def get_full_dl(configs):
         else:
             module = module_from_file(dataset_info["path"])
 
-        dataset_class = getattr(module, dataset_info["class"])
-        dataset_info["dataset_args"]["target_features"] = target_features
-        dataset_info["dataset_args"]["distinct_features"] = distinct_features
+        # dataset_class = getattr(module, dataset_info["class"])
+        # dataset_info["dataset_args"]["target_features"] = target_features
+        # dataset_info["dataset_args"]["distinct_features"] = distinct_features
 
-        # load train dataset and loader
-        data_config = dataset_info["dataset_args"].copy()
-        data_config["intervals"] = genome_intervals
+        # # load train dataset and loader
+        # data_config = dataset_info["dataset_args"].copy()
+        # data_config["intervals"] = genome_intervals
 
-        # train_config = dataset_info["dataset_args"].copy()
-        # del data_config['fold']
-        del data_config['n_folds']
-        # train_config["intervals"] = genome_intervals
-        if "train_transform" in dataset_info:
-            # load transforms
-            train_transform = instantiate(dataset_info["train_transform"])
-            data_config["transform"] = train_transform
-        full_dataset = dataset_class(**data_config)
+        # del data_config['n_folds']
+        # if "train_transform" in dataset_info:
+        #     # load transforms
+        #     train_transform = instantiate(dataset_info["train_transform"])
+        #     data_config["transform"] = train_transform
+        # full_dataset = dataset_class(**data_config)
+
+        full_dataset = get_full_dataset(configs)
+        print('full_dataset without hold-out:', len(full_dataset))
 
         sampler_class = getattr(module, dataset_info["sampler_class"])
         gen = torch.Generator()
@@ -91,6 +93,7 @@ def get_full_dl(configs):
             worker_init_fn=module.encode_worker_init_fn,
             sampler=train_sampler,
         )
+        print('full_datloader without hold-out:', len(full_loader))
 
         return full_loader
 
@@ -101,6 +104,7 @@ if __name__ == "__main__":
     configs = load_path(path, instantiate=False)
     full_dataloader = get_full_dl(configs)
 
+    # mean over seq
     # all_idx = []
     # all_mean_targets = []
     # for batch in tqdm(full_dataloader):
@@ -114,7 +118,7 @@ if __name__ == "__main__":
     #     all_mean_targets.append(mean_target)
     #     all_idx.append(idx)
 
-     # idx_np = torch.cat(all_idx, dim=0).cpu().numpy()
+    #  idx_np = torch.cat(all_idx, dim=0).cpu().numpy()
 
     # mean_target_np = full_mean_targets.cpu().numpy()
     # np.save(f'/home/thurs/DeepCT/results/all_targets_mean.npy', mean_target_np)
@@ -145,25 +149,21 @@ if __name__ == "__main__":
     # res_df.to_csv(f'/home/thurs/DeepCT/results/skf_idx.csv')
 
 
-    all_targets = []
-    for batch in tqdm(full_dataloader):
-        _, _, targets, _ = batch 
-        # idx, retrieved_sample = batch # __getitem__ should returns idx, retrieved_sample
-        # _, _, targets, _ = retrieved_sample
-        targets = targets.to('cuda:1')
-        avg_targets = torch.mean(targets, dim=0)#.flatten()
-        all_targets.append(avg_targets)
-        # del batch, targets, avg_targets
-        # gc.collect()
-        # torch.cuda.empty_cache()
+    # mean over CT
+    # all_targets = []
+    # for batch in tqdm(full_dataloader):
+    #     _, _, targets, _ = batch 
+    #     targets = targets.to('cuda:1')
+    #     avg_targets = torch.mean(targets, dim=0)
+    #     all_targets.append(avg_targets)
 
-    full_targets = torch.cat(all_targets, dim=1)
-    print(full_targets.shape)
+    # full_targets = torch.cat(all_targets, dim=1)
+    # print(full_targets.shape)
 
-    ct_mean_targets = torch.mean(full_targets, dim=1).flatten()
-    print(ct_mean_targets.shape)
+    # ct_mean_targets = torch.mean(full_targets, dim=1).flatten()
+    # print(ct_mean_targets.shape)
 
-    np.save(f'/home/thurs/DeepCT/results/ct_mean_targets.npy', ct_mean_targets.cpu().numpy())
+    # np.save(f'/home/thurs/DeepCT/results/ct_mean_targets_02.npy', ct_mean_targets.cpu().numpy())
 
     # y_cat = pd.cut(ct_mean_targets.cpu().numpy(), 10, labels=range(10))
     # y_cat = np.array(y_cat)
