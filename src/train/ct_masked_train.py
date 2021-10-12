@@ -4,10 +4,13 @@ This module provides the `TrainModel` class and supporting methods.
 import logging
 import math
 import os
-import shutil
 import random
+import shutil
 from time import strftime, time
+
 import numpy as np
+import tensorboard as tb
+import tensorflow as tf
 import torch
 import torch.nn as nn
 from selene_sdk.utils import (
@@ -23,15 +26,13 @@ from sklearn.metrics import (
 )
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
-import tensorflow as tf
-import tensorboard as tb
 
 tf.io.gfile = tb.compat.tensorflow_stub.io.gfile
+import warnings
+
 from tqdm import tqdm
 
 from src.utils import MAX_TOTAL_VAL_TARGET_SIZE, expand_dims
-
-import warnings
 
 warnings.filterwarnings("ignore")
 
