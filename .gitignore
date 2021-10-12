@@ -192,3 +192,5 @@ model_configs/*
 
 # Model outputs
 DeepCT_outputs/
+*.npy
+*.json
