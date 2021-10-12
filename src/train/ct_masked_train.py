@@ -475,7 +475,7 @@ class TrainEncodeDatasetModel(object):
             l = list(fold_map.items())
             for chunk, (
                 (train_batch_loader, valid_batch_loader),
-                current_ct_mask
+                current_ct_mask,
             ) in enumerate(dict(random.sample(l, len(fold_map.keys()))).items()):
 
                 self.current_ct_mask = current_ct_mask
