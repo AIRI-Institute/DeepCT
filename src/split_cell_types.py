@@ -1,15 +1,16 @@
-import numpy as np
 import gc
+
+import numpy as np
 
 gc.enable()
 
-import numpy as np
 import random
+
+import numpy as np
 
 random.seed(666)
 
 from selene_sdk.utils import load_path
-
 
 if __name__ == "__main__":
 

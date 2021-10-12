@@ -1,18 +1,20 @@
+import gc
+
 import numpy as np
+
 from src.transforms import *
 from src.utils import interval_from_line
-import gc
 
 gc.enable()
 
-import numpy as np
 import random
+
+import numpy as np
 
 random.seed(666)
 
-from selene_sdk.utils.config_utils import get_full_dataset
 from selene_sdk.utils import load_path
-
+from selene_sdk.utils.config_utils import get_full_dataset
 
 if __name__ == "__main__":
 
