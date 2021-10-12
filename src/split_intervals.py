@@ -61,5 +61,6 @@ if __name__ == "__main__":
     print("val_intervals counts:", [len(k[1]) for k in splitted_intervals])
 
     np.save(
-        f"/home/thurs/DeepCT/results/splitted_intervals_hold.npy", splitted_intervals
+        "/home/thurs/DeepCT/results/splitted_intervals_hold.npy", 
+        splitted_intervals
     )
