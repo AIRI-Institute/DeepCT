@@ -6,11 +6,11 @@ import math
 import os
 import random
 import shutil
+import warnings
 from time import strftime, time
 
 import numpy as np
 import tensorboard as tb
-import tensorflow as tf
 import torch
 import torch.nn as nn
 from selene_sdk.utils import (
@@ -26,13 +26,13 @@ from sklearn.metrics import (
 )
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
-
-tf.io.gfile = tb.compat.tensorflow_stub.io.gfile
-import warnings
-
 from tqdm import tqdm
 
 from src.utils import MAX_TOTAL_VAL_TARGET_SIZE, expand_dims
+
+# import tensorflow as tf
+# tf.io.gfile = tb.compat.tensorflow_stub.io.gfile
+
 
 warnings.filterwarnings("ignore")
 
