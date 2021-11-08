@@ -64,6 +64,12 @@ class EncodeDataset(torch.utils.data.Dataset):
     position_skip : int, optional
         Default is 1. Use sequences centered at points that are `position_skip`
         positions apart to avoid samples with big sequence overlaps.
+    masked_tracks_path : str or None, optional (default is None)
+        path to file containing track names which should be masked
+        in addition to the tracks which are not measured (i.e. available
+        in distinct_features list). Target_mask will be set to False for 
+        these tracks. If set to None no tracks will be masked except 
+        unmeasured tracks 
 
     Attributes
     ----------
@@ -98,6 +104,12 @@ class EncodeDataset(torch.utils.data.Dataset):
         Total number of cell types present in the dataset.
     position_skip : int
         Number of sequence positions to skip between samples.
+    masked_measured_tracks : numpy 2D array of int
+        Indices of elements indicating id's of tracks
+        which are measured (i.e. present in distinct_features file)
+        but masked masked due to masked_tracks_path file
+    unmasked_measured_tracks : numpy 2D array of int
+        Indices of measured and unmasked tracks
     """
 
     def __init__(
@@ -116,6 +128,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         strand="+",
         multi_ct_target=False,
         position_skip=1,
+        masked_tracks_path=None,
     ):
         self.reference_sequence_path = reference_sequence_path
         self.reference_sequence = self._construct_ref_genome()
@@ -192,6 +205,40 @@ class EncodeDataset(torch.utils.data.Dataset):
                 self.target_mask = (
                     self._feature_indices_by_cell_type_index != _FEATURE_NOT_PRESENT
                 )
+                measures_tracks = np.array(self.target_mask)
+                masked_tracks = []
+                if masked_tracks_path is not None:
+                    with open(masked_tracks_path) as fin:
+                        for line in fin:
+                            masked_tracks.append(line.strip())
+    
+                for track in masked_tracks:
+                    feature_name, cell_type = self._parse_distinct_feature(track)
+                    feature_index = self.target_features.index(feature_name)
+                    cell_type_index = self._cell_types.index(cell_type)
+
+                    # sanity check: we assume we are masking here
+                    # only those tracks which are measured
+                    assert self.target_mask[cell_type_index][feature_index]
+
+                    self.target_mask[cell_type_index][feature_index] = False
+                
+                # now we save indices of masked and unmasked measured tracks
+                # this will be used later in transform if we want to invert
+                # mask for these tracks
+                self.masked_measured_tracks = np.nonzero(
+                        np.logical_and(measures_tracks,~self.target_mask)
+                        )
+                self.unmasked_measured_tracks = np.nonzero(
+                        np.logical_and(measures_tracks,self.target_mask)
+                        )
+                
+                # sanity check: we assume number of masked_measured_tracks
+                # is equal to number of tracks which we asked to be masked
+                assert len(self.masked_measured_tracks[0]) == len(masked_tracks)
+                assert len(self.masked_measured_tracks[0]) + \
+                       len(self.unmasked_measured_tracks[0]) == \
+                        len(self.distinct_features)
 
         self.position_skip = position_skip
 
@@ -533,7 +580,6 @@ class SubsetRandomSampler(torch.utils.data.SubsetRandomSampler):
             dtype=torch.int64,
             generator=generator,
         ).tolist()
-
 
 def encode_worker_init_fn(worker_id):
     """Initialization function for multi-processing DataLoader worker"""

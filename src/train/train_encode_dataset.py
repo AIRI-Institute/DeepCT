@@ -176,6 +176,9 @@ class TrainEncodeDatasetModel(object):
     metrics_transforms: dict
         A dictionary that maps metric names (`str`) to a transform function
         which should be applied to data before metrics computation
+    save_track_metrics_during_training : bool
+        whether metric for each track should be saved at each nth_step_report_stats
+        if not only average value for each metric reported
     """
 
     def __init__(
@@ -204,6 +207,7 @@ class TrainEncodeDatasetModel(object):
         metrics_transforms=dict(roc_auc=None, average_precision=None),
         log_confusion_matrix=True,
         score_threshold=0.5,
+        save_track_metrics_during_training=False
     ):
         """
         Constructs a new `TrainModel` object.
@@ -263,19 +267,37 @@ class TrainEncodeDatasetModel(object):
             verbosity=logging_verbosity,
         )
 
+        # some transform require dataset parameters to work
+        # however, dataset object is not yet available when these transforms
+        # are initialized. Thus we use a dirty hack to pass dataset params there
+        for transform in metrics_transforms.values():
+            try: # transform might be an object with method set_masks
+                transform.set_masks(self.train_loader.dataset)
+            except AttributeError:
+                try:
+                    for tr in transform.transforms:
+                        tr.set_masks(self.train_loader.dataset)
+                        logger.info("Info: masks set for transform "+\
+                                            str(tr))
+                except AttributeError:
+                    pass
+                        
         self._validation_metrics = PerformanceMetrics(
             lambda idx: self.train_loader.dataset.target_features[idx],
+            lambda idx: self.train_loader.dataset._cell_types[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
             metrics_transforms=metrics_transforms,
         )
         self._test_metrics = PerformanceMetrics(
             lambda idx: self.train_loader.dataset.target_features[idx],
+            lambda idx: self.train_loader.dataset._cell_types[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
             metrics_transforms=metrics_transforms,
         )
         self.log_confusion_matrix = log_confusion_matrix
+        self.save_track_metrics_during_training = save_track_metrics_during_training
 
         self._start_step = 0
         # TODO: Should this be set when it is used later? Would need to if we want to
@@ -514,9 +536,13 @@ class TrainEncodeDatasetModel(object):
             log_prefix="train",
         )
 
+        # log train metrics
         for k in sorted(self._validation_metrics.metrics.keys()):
             if k in train_scores and train_scores[k]:
                 self._writer.add_scalar("{}/train".format(k), train_scores[k], step)
+
+        if self.save_track_metrics_during_training:
+            self._validation_metrics.write_feature_scores_to_file(self.output_dir+"/"+str(step)+"_train_metrics.txt")
 
         logger.info("training loss: {0}".format(train_loss))
 
@@ -526,6 +552,7 @@ class TrainEncodeDatasetModel(object):
         self._writer.add_scalar("loss/test", validation_loss, step)
         to_log = [str(validation_loss)]
 
+        # log validation metrics
         for k in sorted(self._validation_metrics.metrics.keys()):
             if k in valid_scores and valid_scores[k]:
                 to_log.append(str(valid_scores[k]))
@@ -536,9 +563,12 @@ class TrainEncodeDatasetModel(object):
 
         logger.info("validation loss: {0}".format(validation_loss))
 
+        if self.save_track_metrics_during_training:
+            self._validation_metrics.write_feature_scores_to_file(self.output_dir+"/"+str(step)+"_val_metrics.txt")
+
         if self.log_confusion_matrix:
             raise NotImplementedError
-            # TODO baseically it's not coplicated to fix this part
+            # TODO basically it's not complicated to fix this part
             # just convert tensors to np.array and concatenate
             if self.masked_targets:
                 masked_targets = all_targets.flatten()[all_target_masks.flatten()]

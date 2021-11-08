@@ -186,6 +186,70 @@ class ArrayTransform(torch.nn.Module):
 
         return tr_prediction, tr_target, tr_target_mask
 
+class InvertMaskedTracks(ArrayTransform):
+    """
+    If there are some tracks measured but masked (i.e. for validation purposes)
+    this will invert the mask for these tracks.
+    In other words, it will invert the mask only for those tracks
+    which are in masked_measured_tracks or unmasked_measured_tracks indices list
+    but keep all the other mask values unchanged
+
+    Parameters
+    ----------
+        dataset:  EncodeDataset object
+        we need this object to get info about which tracks were masked
+    """
+
+    def __init__(self):
+        super().__init__(transform_predictions=False, 
+                        transform_targets=False, transform_masks=True)
+        self.masks_set = False
+
+    def set_masks(self, dataset):
+        self.masked_measured_tracks = dataset.masked_measured_tracks
+        self.unmasked_measured_tracks = dataset.unmasked_measured_tracks
+        self.masks_set = True
+
+    def F(self, x):
+        if not self.masks_set:
+            raise ValueError("Please call set_masks before running transforms")
+
+        def _invert_mask(single_batch):
+            batch_size = single_batch.shape[0]
+            # brief comment about how this code works
+            # we got from dataset an indexing array which looks like
+            # (array([0, 0, 2]), array([0, 1, 0]))
+            # these indices are supposed to extract elements from 2D
+            # mask array (n_cell_types x n_features)
+            # but here we get as input a batch of batch_size elements
+            # so it's 3D array batch_size x n_cell_types x n_features
+            # we will next add batch_size dimension
+            # and repeat mask ids to match this 3D array
+
+            masked_measured_tracks_ids = (
+                    np.repeat(np.arange(batch_size),
+                                    len(self.masked_measured_tracks[0])
+                            ),
+                    np.tile(self.masked_measured_tracks[0],batch_size),
+                    np.tile(self.masked_measured_tracks[1],batch_size)
+            )
+            unmasked_measured_tracks_ids = (
+                    np.repeat(np.arange(batch_size),
+                                    len(self.unmasked_measured_tracks[0])
+                            ),
+                    np.tile(self.unmasked_measured_tracks[0],batch_size),
+                    np.tile(self.unmasked_measured_tracks[1],batch_size)
+            )
+            # we need to copy inputs bs they are are 
+            # mutable and changing them here will 
+            # cause modifications of the original data
+            copy_of_single_batch = torch.clone(single_batch)
+            copy_of_single_batch[masked_measured_tracks_ids] = torch.logical_not(copy_of_single_batch[masked_measured_tracks_ids])
+            copy_of_single_batch[unmasked_measured_tracks_ids] = torch.logical_not(copy_of_single_batch[unmasked_measured_tracks_ids])
+            return copy_of_single_batch
+
+        return map(_invert_mask, x)
+
 
 class Quantitative2Sigmoid(ArrayTransform):
     """
