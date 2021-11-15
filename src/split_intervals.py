@@ -3,7 +3,6 @@ import gc
 import numpy as np
 
 from src.transforms import *
-from src.utils import interval_from_line
 
 gc.enable()
 
@@ -14,11 +13,11 @@ import numpy as np
 random.seed(666)
 
 from selene_sdk.utils import load_path
-from selene_sdk.utils.config_utils import get_full_dataset
+from selene_sdk.utils.config_utils import get_full_dataset, interval_from_line
 
 if __name__ == "__main__":
 
-    path = "model_configs/biox_dnase_multi_ct_masked_train.yaml"
+    path = "/home/msindeeva/DeepCT/model_configs/boix_train_masked_ct.yml"
     configs = load_path(path, instantiate=False)
 
     full_dataset = get_full_dataset(configs)
@@ -48,18 +47,16 @@ if __name__ == "__main__":
     random.shuffle(genome_intervals_arr)
     seq_splits = np.array_split(genome_intervals_arr, n_folds)
 
-    splitted_intervals = []
+    split_intervals = []
     for train_intervals in seq_splits:
         # mark 20% of intervals as val intervals
         val_size = int(len(train_intervals) * 0.2)
         random.seed(666)
         val_intervals = random.sample(train_intervals.tolist(), val_size)
-        splitted_intervals.append((train_intervals, val_intervals))
+        split_intervals.append((train_intervals, val_intervals))
 
-    print(len(splitted_intervals))
-    print("train_intervals counts:", [len(k[0]) for k in splitted_intervals])
-    print("val_intervals counts:", [len(k[1]) for k in splitted_intervals])
+    print(len(split_intervals))
+    print("train_intervals counts:", [len(k[0]) for k in split_intervals])
+    print("val_intervals counts:", [len(k[1]) for k in split_intervals])
 
-    np.save(
-        "/home/thurs/DeepCT/results/splitted_intervals_hold.npy", splitted_intervals
-    )
+    np.save(f"split_intervals_hold_k{n_folds}.npy", split_intervals)
