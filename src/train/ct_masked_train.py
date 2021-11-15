@@ -395,15 +395,16 @@ class TrainEncodeDatasetModel(object):
             # shuffle loaders
             random.seed(666 + self.checkpoint_epoch)
             l = list(fold_map.items())
+            shuffled_loaders = dict(random.sample(l, len(fold_map.keys())))
             for chunk, (
                 (train_batch_loader, valid_batch_loader),
                 current_ct_mask,
-            ) in enumerate(dict(random.sample(l, len(fold_map.keys()))).items()):
+            ) in enumerate(shuffled_loaders.items()):
 
                 if chunk >= self.checkpoint_chunk:
                     print("epoch:", self.checkpoint_epoch, "data chunk:", chunk)
 
-                    self.current_ct_mask = current_ct_mask
+                    self.current_ct_mask = self.ct_indices_to_mask(current_ct_mask)
 
                     # train
                     for batch in tqdm(train_batch_loader):
@@ -429,6 +430,11 @@ class TrainEncodeDatasetModel(object):
                         report_train_targets,
                         report_train_target_masks,
                     )
+                    time_per_batch = []
+                    report_train_losses = []
+                    report_train_predictions = []
+                    report_train_targets = []
+                    report_train_target_masks = []
 
                     # val
                     validation_loss = self._validate_and_log_metrics(
@@ -478,7 +484,7 @@ class TrainEncodeDatasetModel(object):
                 current_ct_mask,
             ) in enumerate(dict(random.sample(l, len(fold_map.keys()))).items()):
 
-                self.current_ct_mask = current_ct_mask
+                self.current_ct_mask = self.ct_indices_to_mask(current_ct_mask)
 
                 print("epoch:", epoch, "data chunk:", chunk)
 
@@ -506,6 +512,11 @@ class TrainEncodeDatasetModel(object):
                     report_train_targets,
                     report_train_target_masks,
                 )
+                time_per_batch = []
+                report_train_losses = []
+                report_train_predictions = []
+                report_train_targets = []
+                report_train_target_masks = []
 
                 # val
                 validation_loss = self._validate_and_log_metrics(
@@ -541,6 +552,14 @@ class TrainEncodeDatasetModel(object):
         self._writer.flush()
 
         return None
+
+    def ct_indices_to_mask(self, ct_indices):
+        """
+        Converts a list of cell type indices into a binary mask.
+        """
+        ct_mask = np.full(self.n_cell_types, False)
+        ct_mask[ct_indices] = True
+        return ct_mask
 
     def train(self, batch):
         """
@@ -632,7 +651,8 @@ class TrainEncodeDatasetModel(object):
             # val mask
             target_mask_tr = target_mask.clone()
             target_mask_tr[:, self.current_ct_mask, :] = False
-            target_mask_val = ~target_mask_tr
+            target_mask_val = target_mask.clone()
+            target_mask_val[:, ~self.current_ct_mask, :] = False
 
             # compute a baseline
             baseline = (targets * target_mask_tr).sum(axis=1) / target_mask_tr.sum(

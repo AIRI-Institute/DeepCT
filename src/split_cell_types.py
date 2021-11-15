@@ -14,7 +14,7 @@ from selene_sdk.utils import load_path
 
 if __name__ == "__main__":
 
-    path = "model_configs/biox_dnase_multi_ct_masked_train.yaml"
+    path = "/home/msindeeva/DeepCT/model_configs/boix_train_masked_ct.yml"
     configs = load_path(path, instantiate=False)
     k = configs["dataset"]["dataset_args"]["n_folds"]
 
@@ -29,4 +29,4 @@ if __name__ == "__main__":
     print("CT train masks counts:", [c.shape[0] for c in ct_masks[0]])
     print("CT val masks counts:", [c.shape[0] for c in ct_masks[1]])
 
-    np.save(f"results/cell_types_random_ids_k{k}.npy", ct_masks)
+    np.save(f"cell_types_random_ids_k{k}.npy", ct_masks)
