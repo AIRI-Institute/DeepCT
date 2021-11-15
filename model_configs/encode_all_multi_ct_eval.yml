@@ -59,7 +59,7 @@ dataset: {
 evaluate_model: !obj:src.evaluation.evaluate_encode_dataset.EvaluateModel {
     trained_model_path: /home/msindeeva/DeepCT/DeepCT_outputs/encode/ct_v2/all/multi_ct/AdamW_COS_LR0001/2021-05-25-15-35-00/best_model.pth.tar,
     report_gt_feature_n_positives: 10,
-    device: 'cuda:3',
+    device: 'cuda:2',
     data_parallel: False,
     log_cell_type_embeddings_to_tensorboard: True,
     metrics: {
@@ -69,6 +69,26 @@ evaluate_model: !obj:src.evaluation.evaluate_encode_dataset.EvaluateModel {
         precision: !import src.metrics.precision_score,
         recall: !import src.metrics.recall_score,
         roc_auc: !import sklearn.metrics.roc_auc_score,
+        jaccard@1: !obj:src.metrics.threshold_wrapper {
+            score_func: !import src.metrics.jaccard_score,
+            threshold: 0.1,
+        },
+        jaccard@3: !obj:src.metrics.threshold_wrapper {
+            score_func: !import src.metrics.jaccard_score,
+            threshold: 0.3,
+        },
+        jaccard@5: !obj:src.metrics.threshold_wrapper {
+            score_func: !import src.metrics.jaccard_score,
+            threshold: 0.5,
+        },
+        jaccard@7: !obj:src.metrics.threshold_wrapper {
+            score_func: !import src.metrics.jaccard_score,
+            threshold: 0.7,
+        },
+        jaccard@9: !obj:src.metrics.threshold_wrapper {
+            score_func: !import src.metrics.jaccard_score,
+            threshold: 0.9,
+        },
     },
 }
 random_seed: 1447
