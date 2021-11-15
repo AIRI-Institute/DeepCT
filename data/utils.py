@@ -1,6 +1,8 @@
 import os
 import tempfile
 
+from tqdm import tqdm
+
 CHROMOSOMES = [f"chr{i}" for i in list(range(1, 23)) + ["X", "Y", "M"]]
 
 
@@ -129,6 +131,7 @@ def create_targets(
     distinct_features_path,
     pad_targets=100,
     chrom_counts=None,
+    predefined_distinct=False,
 ):
     """
     Create files with target feature intervals
@@ -157,25 +160,34 @@ def create_targets(
     """
 
     distinct_features = set()
+    if predefined_distinct:
+        with open(distinct_features_path, "r") as f:
+            distinct_features = list(map(lambda x: x.rstrip(), f.readlines()))
+
     f = tempfile.NamedTemporaryFile("w", delete=False)
     with open(all_targets_path) as f1, tempfile.NamedTemporaryFile(
         "w", delete=False
     ) as f2, tempfile.NamedTemporaryFile("w", delete=False) as f3:
-        for line in f1:
+        for line in tqdm(f1):
             feature_name = line.split("|")[1]
             if feature_name in target_features:
+                distinct_feature = line.split("\t")[-1].rstrip()
+                if predefined_distinct and distinct_feature not in distinct_features:
+                    continue
+                if not predefined_distinct:
+                    distinct_features.add(distinct_feature)
                 padded_line = pad_interval_line(line, pad_targets, chrom_counts)
                 if "chrM" in padded_line:
                     continue
                 f2.write(line)
                 f3.write(padded_line)
-                distinct_feature = line.split("\t")[-1].rstrip()
-                distinct_features.add(distinct_feature)
-    distinct_features = sorted(distinct_features)
-    with open(distinct_features_path, "w") as f:
-        for distinct_feature in distinct_features:
-            f.write(distinct_feature)
-            f.write("\n")
+
+    if not predefined_distinct:
+        distinct_features = sorted(distinct_features)
+        with open(distinct_features_path, "w") as f:
+            for distinct_feature in distinct_features:
+                f.write(distinct_feature)
+                f.write("\n")
 
     # write target data
     os.system(
@@ -205,6 +217,7 @@ def full_target_file_pipeline(
     elongate_encode_blacklist=True,
     blacklist_padding=500,
     target_padding=30,
+    predefined_distinct=False,
 ):
     """
     Full pipeline of target files generation from target features
@@ -264,4 +277,5 @@ def full_target_file_pipeline(
         distinct_features_path,
         pad_targets=target_padding,
         chrom_counts=chrom_counts,
+        predefined_distinct=predefined_distinct,
     )
