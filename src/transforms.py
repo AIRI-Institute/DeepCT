@@ -288,7 +288,7 @@ class Quantitative2Qualitative(ArrayTransform):
         return map(lambda y: y > self.threshold, x)
 
 
-class MeanAndDeviation2AbsolutePredication(ArrayTransform):
+class MeanAndDeviation2AbsolutePrediction(ArrayTransform):
     """
     Convert targets from mean_positional_value and cell-type specific deviations
     to the form of absolute cell-type specific value, i.e

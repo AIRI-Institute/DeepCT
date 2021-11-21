@@ -381,10 +381,10 @@ class TrainEncodeDatasetModel(object):
                 t_f = time()
                 time_per_batch.append(t_f - t_i)
                 report_train_losses.append(loss)
-                report_train_predictions.append(prediction)
-                report_train_targets.append(target)
+                report_train_predictions.append(prediction.cpu())
+                report_train_targets.append(target.cpu())
                 if self.masked_targets:
-                    report_train_target_masks.append(target_mask)
+                    report_train_target_masks.append(target_mask.cpu())
                 total_steps += 1
                 self._update_and_log_lr_if_needed(total_steps)
 
@@ -638,13 +638,14 @@ class TrainEncodeDatasetModel(object):
                 if self.criterion.reduction == "sum":
                     loss = loss / self.criterion.weight.sum()
 
-                all_predictions.append(outputs)
-                all_targets.append(targets)
+                all_predictions.append(outputs.cpu())
+                all_targets.append(targets.cpu())
                 if self.masked_targets:
-                    all_target_masks.append(target_mask)
+                    all_target_masks.append(target_mask.cpu())
 
                 batch_losses.append(loss.item())
-
+        # DEBUG
+        print (len(all_predictions), len(all_targets), len(all_target_masks))
         return np.average(batch_losses), all_predictions, all_targets, all_target_masks
 
     def _compute_metrics(self, predictions, targets, target_mask, log_prefix=None):

@@ -6,9 +6,9 @@ from selene_sdk.sequences import Genome
 from selene_sdk.targets import GenomicFeatures, qGenomicFeatures
 
 from src.transforms import PermuteSequenceChannels
+from torch.utils.data import RandomSampler
 
 _FEATURE_NOT_PRESENT = -1
-
 
 class EncodeDataset(torch.utils.data.Dataset):
     """
