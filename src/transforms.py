@@ -2,6 +2,7 @@ from itertools import starmap
 
 import numpy as np
 import torch
+import torchvision
 
 
 class PermuteSequenceChannels(torch.nn.Module):
@@ -301,3 +302,40 @@ class Concat_batches(ArrayTransform):
             items = tuple(map(lambda y: y.cpu().detach().numpy(), items))
         result = np.concatenate(items)
         return result
+
+
+# Define a few useful transforms
+QUANTITAVE_PREDICTION_THRESHOLD = 1.4816
+
+quant2prob_transform = torchvision.transforms.Compose(
+    [
+        Quantitative2Sigmoid(
+            transform_predictions=True,
+            transform_targets=False,
+            threshold=QUANTITAVE_PREDICTION_THRESHOLD,
+        ),  # transform predictions
+        Quantitative2Qualitative(
+            transform_predictions=True,
+            transform_targets=False,
+            threshold=QUANTITAVE_PREDICTION_THRESHOLD,
+        ),  # transform targets
+        Concat_batches(
+            transform_predictions=True,
+            transform_targets=True,
+            transform_masks=True,
+        ),
+    ]
+)
+
+preds2mpv_transform = torchvision.transforms.Compose(
+    [
+        MeanAverageValueBasedPredictor(),
+        quant2prob_transform,
+    ]
+)
+
+base_transform = Concat_batches(
+    transform_predictions=True,
+    transform_targets=True,
+    transform_masks=True,
+)
