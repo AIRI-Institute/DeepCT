@@ -212,8 +212,10 @@ class TrainEncodeDatasetModel(object):
         data_parallel=False,
         logging_verbosity=2,
         metrics=dict(roc_auc=roc_auc_score, average_precision=average_precision_score),
+        metrics_transforms=dict(roc_auc=None, average_precision=None),
         log_confusion_matrix=True,
         score_threshold=0.5,
+        save_track_metrics_during_training=True,
     ):
         """
         Constructs a new `TrainModel` object.
@@ -281,20 +283,27 @@ class TrainEncodeDatasetModel(object):
 
         self._validation_metrics = PerformanceMetrics(
             lambda idx: self.dataloaders[0][0].dataset.target_features[idx],
+            lambda idx: self.dataloaders[0][0].dataset._cell_types[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
+            metrics_transforms=metrics_transforms,
         )
         self._baseline_validation_metrics = PerformanceMetrics(
             lambda idx: self.dataloaders[0][0].dataset.target_features[idx],
+            lambda idx: self.dataloaders[0][0].dataset._cell_types[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
+            metrics_transforms=metrics_transforms,
         )
         self._test_metrics = PerformanceMetrics(
             lambda idx: self.dataloaders[0][0].dataset.target_features[idx],
+            lambda idx: self.dataloaders[0][0].sberbankdataset._cell_types[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
+            metrics_transforms=metrics_transforms,
         )
         self.log_confusion_matrix = log_confusion_matrix
+        self.save_track_metrics_during_training = save_track_metrics_during_training
 
         self._start_step = 0
         # TODO: Should this be set when it is used later? Would need to if we want to
@@ -674,12 +683,6 @@ class TrainEncodeDatasetModel(object):
                     loss = loss / self.criterion.weight.sum()
 
                 predictions = torch.sigmoid(outputs)
-                predictions = predictions.view(-1, predictions.shape[-1])
-                targets = targets.view(-1, targets.shape[-1])
-                baseline = baseline.view(-1, baseline.shape[-1])
-
-                if self.masked_targets:
-                    target_mask = target_mask_val.view(-1, target_mask_val.shape[-1])
 
                 if self.val_reduction_factor > 1:
                     reduced_val_batch_size = (
@@ -701,12 +704,6 @@ class TrainEncodeDatasetModel(object):
                 if self.masked_targets:
                     all_target_masks.append(target_mask.data.cpu().numpy())
                 batch_losses.append(loss.item())
-
-        all_predictions = expand_dims(np.concatenate(all_predictions))
-        all_targets = expand_dims(np.concatenate(all_targets))
-        all_baselines = expand_dims(np.concatenate(all_baselines))
-        if self.masked_targets:
-            all_target_masks = expand_dims(np.concatenate(all_target_masks))
 
         return (
             np.average(batch_losses),
@@ -753,11 +750,9 @@ class TrainEncodeDatasetModel(object):
         self._train_logger.info(train_loss)
         self._writer.add_scalar("loss/train", train_loss, step)
 
-        if self.masked_targets:
-            train_target_masks = expand_dims(np.concatenate(train_target_masks))
         train_scores = self._compute_metrics(
-            expand_dims(np.concatenate(train_predictions)),
-            expand_dims(np.concatenate(train_targets)),
+            train_predictions,
+            train_targets,
             train_target_masks,
             log_prefix="train",
         )
@@ -765,6 +760,11 @@ class TrainEncodeDatasetModel(object):
         for k in sorted(self._validation_metrics.metrics.keys()):
             if k in train_scores and train_scores[k]:
                 self._writer.add_scalar(f"model_{k}/train", train_scores[k], step)
+
+        if self.save_track_metrics_during_training:
+            self._validation_metrics.write_feature_scores_to_file(
+                os.path.join(self.output_dir, str(step) + "_train_metrics.txt")
+            )
 
         logger.info("training loss: {0}".format(train_loss))
 
@@ -800,6 +800,14 @@ class TrainEncodeDatasetModel(object):
         self._validation_logger.info("\t".join(to_log))
 
         logger.info("validation loss: {0}".format(validation_loss))
+
+        if self.save_track_metrics_during_training:
+            self._validation_metrics.write_feature_scores_to_file(
+                os.path.join(self.output_dir, str(step) + "_val_metrics.txt")
+            )
+            self._baseline_validation_metrics.write_feature_scores_to_file(
+                os.path.join(self.output_dir, str(step) + "_val_baseline_metrics.txt")
+            )
 
         if self.log_confusion_matrix:
             if self.masked_targets:
@@ -906,10 +914,7 @@ class TrainEncodeDatasetModel(object):
                     all_target_masks.append(target_mask.data.cpu().numpy())
 
                 batch_losses.append(loss.item())
-        all_predictions = expand_dims(np.concatenate(all_predictions))
-        all_targets = expand_dims(np.concatenate(all_targets))
-        if self.masked_targets:
-            all_target_masks = expand_dims(np.concatenate(all_target_masks))
+
         return np.average(batch_losses), all_predictions, all_targets, all_target_masks
 
     def _compute_metrics(self, predictions, targets, target_mask, log_prefix=None):

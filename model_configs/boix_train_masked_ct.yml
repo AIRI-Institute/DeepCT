@@ -30,19 +30,19 @@ dataset: {
     debug: False,
     path: /home/msindeeva/DeepCT/src/dataset.py,
     class: EncodeDataset,
-    ct_fold_ids: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1/cell_types_random_ids_k3.npy,
-    seq_fold_ids: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1/split_intervals_hold_k3.npy,
+    ct_fold_ids: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1/cell_types_random_ids_k10.npy,
+    seq_fold_ids: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1/split_intervals_hold_k10.npy,
     train_sampler_class: LargeRandomSampler,
     train_sampler_args: {replacement: False},
-    validation_sampler_class: SubsetRandomSampler,
-    validation_sampler_args: {num_samples: 100000},
-    
+    #validation_sampler_class: SubsetRandomSampler,
+    #validation_sampler_args: {num_samples: 1000000},
+
     distinct_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1/distinct_features.txt,
     target_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1/target_features.txt,
     sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1/target_intervals.bed,
     test_holdout: [chr8, chr9],
     validation_holdout: [chr6, chr7],
-    
+
     dataset_args: {
         reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
         target_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1/sorted_data.bed.gz,
@@ -52,7 +52,7 @@ dataset: {
         center_bin_to_predict: 200,
         feature_thresholds: 0.5,
         position_skip: 120,
-        n_folds: 3,                    
+        n_folds: 10,                    
         fold: 0,                        # !!!
     },
     loader_args: {
@@ -75,7 +75,7 @@ train_model: !obj:src.train.ct_masked_train.TrainEncodeDatasetModel {
     report_stats_every_n_steps: 2000,
     save_checkpoint_every_n_steps: 2000,
     report_gt_feature_n_positives: 2,
-    device: 'cuda:3',
+    device: 'cuda:1',
     data_parallel: False,
     logging_verbosity: 2,
     metrics: {
@@ -87,9 +87,20 @@ train_model: !obj:src.train.ct_masked_train.TrainEncodeDatasetModel {
 #        recall: !import src.metrics.recall_score,
         # roc_auc: !import sklearn.metrics.roc_auc_score,
     },
-    # log_confusion_matrix: False,
+    metrics_transforms: {
+        average_precision: !import src.transforms.base_transform,
+
+        #r2: !import src.transforms.base_transform,
+        #featurewise_pearson: !import src.transforms.base_transform,
+        #trackwise_pearson: !import src.transforms.preds2tracks, #!obj:src.transforms.preds2tracks_transform {
+            #vector_indices_by_matrix_index: /home/jovyan/vector_indices_by_matrix_index.npy,
+        #},
+        #average_precision: !import src.transforms.quant2prob_transform,
+        #average_precision_baseline: !import src.transforms.preds2mpv_transform,
+    },
+    log_confusion_matrix: False,
 }
-output_dir: DeepCT_outputs/boix/ct_v2/complete_clique1/baseline0/
+output_dir: DeepCT_outputs/boix/ct_v2/complete_clique1/kfold_10folds_LR0001/fold_00/
 
 random_seed: 1447
 create_subdirectory: True
