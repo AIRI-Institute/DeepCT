@@ -134,7 +134,13 @@ class TrainEncodeDatasetModel(object):
         Default is `True`. Specify whether confusion matrix should be logged.
     score_threshold : int, optional
         Default is 0.5. Score threshold to determine prediction based on the model output score.
-
+    max_train_sample_size_for_metrices : int, optional
+        Default is None, which means that all data acquired before report_stats_every_n_steps 
+        triggered will be used for train metrices computation. If integer provided, this will 
+        be maximum number of batches used for train metrices computation.
+    early_data_copy_to_cpu : bool, optional
+        copy data on CPU before running transforms and computing metrics. Deafault is False
+        Setting True will slow computations but save GPU RAM
 
     Attributes
     ----------
@@ -179,6 +185,9 @@ class TrainEncodeDatasetModel(object):
     save_track_metrics_during_training : bool
         whether metric for each track should be saved at each nth_step_report_stats
         if not only average value for each metric reported
+    early_data_copy_to_cpu : bool
+        copy data to cpu before transforms. Deafault is False, which is faster but 
+        requirers more GPU memory 
     """
 
     def __init__(
@@ -207,7 +216,9 @@ class TrainEncodeDatasetModel(object):
         metrics_transforms=dict(roc_auc=None, average_precision=None),
         log_confusion_matrix=True,
         score_threshold=0.5,
-        save_track_metrics_during_training=False
+        save_track_metrics_during_training=False,
+        max_train_sample_size_for_metrices=None,
+        early_data_copy_to_cpu=False
     ):
         """
         Constructs a new `TrainModel` object.
@@ -351,6 +362,9 @@ class TrainEncodeDatasetModel(object):
         )
 
         self.score_threshold = score_threshold
+        self.max_train_sample_size_for_metrices=max_train_sample_size_for_metrices
+        self.early_data_copy_to_cpu=early_data_copy_to_cpu
+
 
     def train_and_validate(self):
         """
@@ -381,10 +395,18 @@ class TrainEncodeDatasetModel(object):
                 t_f = time()
                 time_per_batch.append(t_f - t_i)
                 report_train_losses.append(loss)
-                report_train_predictions.append(prediction.cpu())
-                report_train_targets.append(target.cpu())
-                if self.masked_targets:
-                    report_train_target_masks.append(target_mask.cpu())
+                if self.max_train_sample_size_for_metrices is None or\
+                        len(report_train_targets)<=self.max_train_sample_size_for_metrices:
+                    if self.early_data_copy_to_cpu:
+                        report_train_predictions.append(prediction.cpu())
+                        report_train_targets.append(target.cpu())
+                        if self.masked_targets:
+                            report_train_target_masks.append(target_mask.cpu())
+                    else:
+                        report_train_predictions.append(prediction)
+                        report_train_targets.append(target)
+                        if self.masked_targets:
+                            report_train_target_masks.append(target_mask)
                 total_steps += 1
                 self._update_and_log_lr_if_needed(total_steps)
 
@@ -638,14 +660,18 @@ class TrainEncodeDatasetModel(object):
                 if self.criterion.reduction == "sum":
                     loss = loss / self.criterion.weight.sum()
 
-                all_predictions.append(outputs.cpu())
-                all_targets.append(targets.cpu())
-                if self.masked_targets:
-                    all_target_masks.append(target_mask.cpu())
-
+                if self.early_data_copy_to_cpu:
+                    all_predictions.append(outputs.cpu())
+                    all_targets.append(targets.cpu())
+                    if self.masked_targets:
+                        all_target_masks.append(target_mask.cpu())
+                else:
+                    all_predictions.append(outputs)
+                    all_targets.append(targets)
+                    if self.masked_targets:
+                        all_target_masks.append(target_mask)
                 batch_losses.append(loss.item())
-        # DEBUG
-        print (len(all_predictions), len(all_targets), len(all_target_masks))
+
         return np.average(batch_losses), all_predictions, all_targets, all_target_masks
 
     def _compute_metrics(self, predictions, targets, target_mask, log_prefix=None):
