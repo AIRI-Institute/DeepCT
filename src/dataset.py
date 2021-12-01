@@ -7,6 +7,7 @@ from selene_sdk.targets import GenomicFeatures, qGenomicFeatures
 
 from src.transforms import PermuteSequenceChannels
 from torch.utils.data import RandomSampler
+import gc
 
 _FEATURE_NOT_PRESENT = -1
 
@@ -594,3 +595,7 @@ def encode_worker_init_fn(worker_id):
     # which are not multiprocessing-safe, see
     # see https://github.com/deeptools/pyBigWig/issues/74#issuecomment-439520821
     dataset.target = dataset._construct_target(dataset.quantitative_features)
+    
+    # some tests indicates that after re-initialization of the dataset unused data loader are not
+    # cleared from memory. This is experimental feature aiming to fix this problem
+    gc.collect()
