@@ -140,7 +140,7 @@ class EncodeDataset(torch.utils.data.Dataset):
                 print(
                     "Feature thresholds are not implemented for quantitative_features and will be ignored"
                 )
-            self.target = self._construct_target(quantitative_features)
+            self.target = self._construct_target()
         else:
             self.target_class = target_class
             target_init_kwargs["features"] = self.distinct_features
@@ -200,6 +200,7 @@ class EncodeDataset(torch.utils.data.Dataset):
                 self.target_mask = (
                     self._feature_indices_by_cell_type_index != _FEATURE_NOT_PRESENT
                 )
+            #np.save('/home/jovyan/vector_indices_by_matrix_index.npy', self._feature_indices_by_cell_type_index)
 
         self.position_skip = position_skip
 
@@ -257,12 +258,12 @@ class EncodeDataset(torch.utils.data.Dataset):
         return sample_idx, cell_type_idx
 
     def _retrieve_sample_by_idx(self, sample_idx, cell_type_idx):
-        chrom, start, end, sample_idx = self.samples[sample_idx]
+        chrom, start, end, chrom_sample_idx = self.samples[sample_idx]
         context = self.sequence_length - (end - start)
         if context != 0:
             start -= context // 2
             end += context // 2 + context % 2
-        track_vector = self.target.get_feature_data(chrom, sample_idx)
+        track_vector = self.target.get_feature_data(chrom, chrom_sample_idx)
         target, target_mask, cell_type = self._track_vector_to_target(track_vector, cell_type_idx)
 
         retrieved_seq = self.reference_sequence.get_encoding_from_coords(
@@ -378,7 +379,24 @@ class EncodeDataset(torch.utils.data.Dataset):
             target = track_vector.astype(np.float32)
             target_mask = np.ones_like(target)
             cell_type = None
+        if target.shape != target_mask.shape:
+            target_mask = np.repeat(np.expand_dims(target_mask, axis=1), target.shape[1], axis=1)
         return target, target_mask, cell_type
+
+    def _target_to_track_vector(self, target):
+        if self.cell_wise:
+            if not self.multi_ct_target:
+                raise ValueError('Impossible to recover a vector of tracks \
+                    from a single cell type sample')
+            track_vector = np.full(len(self.distinct_features), _FEATURE_NOT_PRESENT)
+            for cell_type_idx in range(target.shape[0]):
+                for feature_idx in range(target.shape[1]):
+                    track_vector_idx = self._feature_indices_by_cell_type_index[cell_type_idx, feature_idx]
+                    if track_vector_idx != _FEATURE_NOT_PRESENT:
+                        track_vector[track_vector_idx] = target[cell_type_idx, feature_idx]
+        else:
+            track_vector = target
+        return track_vector
 
     def _check_retrieved_sequence(self, sequence, chrom, position) -> bool:
         """Checks whether retrieved sequence is acceptable.
@@ -417,8 +435,8 @@ class EncodeDataset(torch.utils.data.Dataset):
     def _construct_ref_genome(self):
         return Genome(self.reference_sequence_path)
 
-    def _construct_target(self, quantitative_features):
-        if quantitative_features:
+    def _construct_target(self):
+        if self.quantitative_features:
             feature_path = dict(
                 [line.strip().split("\t") for line in open(self.target_path)]
             )
@@ -594,4 +612,4 @@ def encode_worker_init_fn(worker_id):
     # and similarly for targets (as they use bigWig file handlers)
     # which are not multiprocessing-safe, see
     # see https://github.com/deeptools/pyBigWig/issues/74#issuecomment-439520821
-    dataset.target = dataset._construct_target(dataset.quantitative_features)
+    dataset.target = dataset._construct_target()
