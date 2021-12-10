@@ -29,6 +29,9 @@ class EncodeDataset(torch.utils.data.Dataset):
         to file mapping each feature label to corresponding bigWig file
     quantitative_features: bool
         whether features are quantitative or qualitative
+    quantitative_features_agg_function: str
+        aggregation function used for quantitative features, defines how
+        to aggregate feature values across target genomic interval
     distinct_features : list(str)
         List of distinct `cell_type|feature_name|info` combinations available,
         e.g. `["K562|ZBTB33|None", "HCF|DNase|None", "HUVEC|DNase|None"]`.
@@ -121,6 +124,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         target_features,
         intervals,
         quantitative_features=False,
+        quantitative_features_agg_function="max",
         cell_wise=True,
         transform=PermuteSequenceChannels(),
         sequence_length=1000,
@@ -139,6 +143,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.target_path = target_path
         self.feature_thresholds = feature_thresholds
         self.quantitative_features = quantitative_features
+        self.quantitative_features_agg_function = quantitative_features_agg_function
         if quantitative_features:
             # for quantitative_features opening feature file and looking for feature costs a lot of time
             # so we won't keep those celltype-feature combintations where feature is not in target_features
@@ -151,7 +156,9 @@ class EncodeDataset(torch.utils.data.Dataset):
                 print(
                     "Feature thresholds are not implemented for quantitative_features and will be ignored"
                 )
-        self.target = self._construct_target(quantitative_features)
+        self.target = self._construct_target(quantitative_features,
+                                             quantitative_features_agg_function
+                                             )
 
         if not cell_wise and multi_ct_target:
             raise ValueError("cell_wise=True must be used with multi_ct_target=True")
@@ -414,14 +421,17 @@ class EncodeDataset(torch.utils.data.Dataset):
     def _construct_ref_genome(self):
         return Genome(self.reference_sequence_path)
 
-    def _construct_target(self, quantitative_features):
+    def _construct_target(self, quantitative_features,
+                                quantitative_features_agg_function):
         if quantitative_features:
             feature_path = dict(
                 [line.strip().split("\t") for line in open(self.target_path)]
             )
             feature_path = [feature_path[feature] for feature in self.distinct_features]
 
-            return qGenomicFeatures(self.distinct_features, feature_path)
+            return qGenomicFeatures(self.distinct_features, 
+                                    feature_path,
+                                    agg_function = quantitative_features_agg_function)
         else:
             return GenomicFeatures(
                 self.target_path,
@@ -594,7 +604,8 @@ def encode_worker_init_fn(worker_id):
     # and similarly for targets (as they use bigWig file handlers)
     # which are not multiprocessing-safe, see
     # see https://github.com/deeptools/pyBigWig/issues/74#issuecomment-439520821
-    dataset.target = dataset._construct_target(dataset.quantitative_features)
+    dataset.target = dataset._construct_target(dataset.quantitative_features,
+                                                dataset.quantitative_features_agg_function)
     
     # some tests indicates that after re-initialization of the dataset unused data loader are not
     # cleared from memory. This is experimental feature aiming to fix this problem
