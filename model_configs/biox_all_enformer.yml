@@ -1,0 +1,140 @@
+---
+ops: [train]
+lr: 0.0001
+lr_scheduler: {
+    #class: !import transformers.get_cosine_schedule_with_warmup,
+    class: !import torch.optim.lr_scheduler.ReduceLROnPlateau,
+    class_args: {
+        #num_warmup_steps: 50,
+        #num_training_steps: 250,
+        factor: 0.1,
+    }
+}
+model: {
+    path: src/enformer.py,
+    class: Enformer,
+    class_args: {
+        channels: 1536, 
+        input_length: 196608, 
+        context_length: 40960,
+        n_cell_types: 858,
+        multi_ct_output: True,
+        cell_type_embedding_length: 32,
+        output_channels: 40,
+        freeze_sequence_net: True,
+    }
+}
+criterion: !obj:src.criterion.WeightedMSELoss {
+    reduction: 'sum',
+}
+#criterion: !obj:src.criterion.WeightedCorrelationLoss {
+#    reduction: 'mean',
+#    mse_coef: 1,
+#    corr_coef: 100,
+#}
+dataset: {
+    path: src/dataset.py,
+    class: EncodeDataset,
+    train_sampler_class: SubsetRandomSampler,
+    train_sampler_args: {
+        #replacement: False,
+        num_samples: 50,
+    },
+    validation_sampler_class: SubsetRandomSampler,
+    validation_sampler_args: {
+        num_samples: 50,
+    },
+
+    distinct_features_path: /home/jovyan/enformer_data/distinct_features.txt,
+    target_features_path: /home/jovyan/enformer_data/target_features.txt,
+
+    train_intervals_path: /home/jovyan/boix_data2/train_enformer_samples_hg19.bed,
+    validation_intervals_path: /home/jovyan/boix_data2/val_enformer_samples_hg19.bed,
+    test_intervals_path: /home/jovyan/boix_data2/test_enformer_samples_hg19.bed,
+
+    dataset_args: {
+        reference_sequence_path: /home/jovyan/hg19/male.hg19.fasta,
+        cell_wise: True,
+        samples_mode: True,
+        multi_ct_target: True,
+        sequence_length: 196608,
+        center_bin_to_predict: 114688,
+        feature_thresholds: 0.5,
+        position_skip: 1,
+        target_class: !import selene_sdk.targets.qSeqMemMapFeatures,
+        target_path: None,
+        target_init_kwargs: {
+            target_folder_path: /home/jovyan/boix_data2/, 
+            memmap_shapes_path: /home/jovyan/boix_data2/chrom_shapes.txt, 
+            memmap_tracks_file: /home/jovyan/boix_data2/distinct_features.txt,
+        }
+    },
+    loader_args: {
+        batch_size: 2,
+        num_workers: 2,
+        pin_memory: True,
+        drop_last: True,
+    },
+    train_transform: !obj:torchvision.transforms.Compose {
+        transforms: [
+            !obj:src.transforms.PermuteSequenceChannels {},
+            !obj:src.transforms.RandomReverseStrand {
+                p: 0.5,
+            },
+            !obj:src.transforms.LogTargets {
+                pseudocount: 0.001
+            },
+            !obj:src.transforms.ClipTargets {
+              amin: -1.0,
+              amax: 4.0
+            }
+        ],
+    },
+    validation_transform: !obj:torchvision.transforms.Compose {
+        transforms: [
+            !obj:src.transforms.PermuteSequenceChannels {},
+            !obj:src.transforms.LogTargets {
+                pseudocount: 0.001
+            },
+            !obj:src.transforms.ClipTargets {
+              amin: -1.0,
+              amax: 4.0
+            }
+        ]
+    }
+}
+train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
+    n_epochs: 50,
+    split_ct_batch_over_n_passes: 2,
+    report_stats_every_n_steps: 50,
+    log_embeddings_every_n_steps: 200,
+    save_checkpoint_every_n_steps: 200,
+    report_gt_feature_n_positives: 10,
+    device: [0, 1],
+    data_parallel: True,
+    logging_verbosity: 2,
+    log_confusion_matrix: False,
+    metrics: {
+#        mse: !import sklearn.metrics.mean_squared_error,
+        r2: !import sklearn.metrics.r2_score,
+        #average_precision: !import sklearn.metrics.average_precision_score,
+        #average_precision_baseline: !import sklearn.metrics.average_precision_score,
+        #featurewise_pearson: !import src.metrics.pearsonr_cc,
+        #trackwise_pearson: !import src.metrics.pearsonr_cc,
+    },
+    metrics_transforms: {
+        r2: !import src.transforms.base_transform,
+        #featurewise_pearson: !import src.transforms.base_transform,
+        #trackwise_pearson: !import src.transforms.preds2tracks, #!obj:src.transforms.preds2tracks_transform {
+            #vector_indices_by_matrix_index: /home/jovyan/vector_indices_by_matrix_index.npy,
+        #},
+        #average_precision: !import src.transforms.quant2prob_transform,
+        #average_precision_baseline: !import src.transforms.preds2mpv_transform,
+    },
+    checkpoint_resume: /home/jovyan/DeepCT/pretrained_enformer.pth.tar,
+}
+output_dir: DeepCT_outputs/boix/enformer/all/mini/multi_ct/freeze_seq_net/AdamW_COS_LR0001/
+
+random_seed: 1447
+create_subdirectory: True
+...

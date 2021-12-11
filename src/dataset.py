@@ -120,12 +120,13 @@ class EncodeDataset(torch.utils.data.Dataset):
         self,
         reference_sequence_path,
         target_path,
-        distinct_features,  # TODO: rename as "tracks"
+        distinct_features,
         target_features,
         intervals,
         quantitative_features=False,
         quantitative_features_agg_function="max",
         cell_wise=True,
+        samples_mode=False,
         transform=PermuteSequenceChannels(),
         sequence_length=1000,
         center_bin_to_predict=200,
@@ -134,6 +135,8 @@ class EncodeDataset(torch.utils.data.Dataset):
         multi_ct_target=False,
         position_skip=1,
         masked_tracks_path=None,
+        target_class=GenomicFeatures,
+        target_init_kwargs=None,
     ):
         self.reference_sequence_path = reference_sequence_path
         self.reference_sequence = self._construct_ref_genome()
@@ -144,24 +147,22 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.feature_thresholds = feature_thresholds
         self.quantitative_features = quantitative_features
         self.quantitative_features_agg_function = quantitative_features_agg_function
-        if quantitative_features:
-            # for quantitative_features opening feature file and looking for feature costs a lot of time
-            # so we won't keep those celltype-feature combintations where feature is not in target_features
-            self.distinct_features = [
+        
+        # we won't keep those tracks (i.e celltype-feature combintations)
+        # where feature is not in target_features
+        self.distinct_features = [
                 i
                 for i in self.distinct_features
                 if self._parse_distinct_feature(i)[0] in self.target_features
             ]
-            if self.feature_thresholds is not None:
-                print(
-                    "Feature thresholds are not implemented for quantitative_features and will be ignored"
-                )
-        self.target = self._construct_target(quantitative_features,
-                                             quantitative_features_agg_function
-                                             )
+        
+        self.target_class = target_class
+        target_init_kwargs["features"] = self.distinct_features
+        self.target_init_kwargs = target_init_kwargs
+        self.target = self._construct_target()
 
         if not cell_wise and multi_ct_target:
-            raise ValueError("cell_wise=True must be used with multi_ct_target=True")
+            raise ValueError("cell_wise=True must be used when multi_ct_target=True")
         self.cell_wise = cell_wise
         self.multi_ct_target = multi_ct_target
         self.transform = transform
@@ -186,8 +187,7 @@ class EncodeDataset(torch.utils.data.Dataset):
                 self.distinct_features
             ):
                 feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
-                if feature_name not in self.target_features:
-                    continue
+                assert feature_name in self.target_features
                 if cell_type not in self._cell_types:
                     self._cell_types.append(cell_type)
 
@@ -250,13 +250,18 @@ class EncodeDataset(torch.utils.data.Dataset):
 
         self.position_skip = position_skip
 
-        self.intervals = intervals
-        self.intervals_length_sums = [0]
-        for chrom, pos_start, pos_end in self.intervals:
-            interval_length = (pos_end - pos_start) // self.position_skip + 1
-            self.intervals_length_sums.append(
-                self.intervals_length_sums[-1] + interval_length
-            )
+        self.samples_mode = samples_mode
+        if self.samples_mode:
+            self.samples = intervals
+        else:
+            self.intervals = intervals
+            self.intervals_length_sums = [0]
+            for chrom, pos_start, pos_end in self.intervals:
+                interval_length = (pos_end - pos_start) // self.position_skip + 1
+                self.intervals_length_sums.append(
+                    self.intervals_length_sums[-1] + interval_length
+                )
+
         if self.cell_wise:
             if self.multi_ct_target:
                 self.target_size = self.target_mask.size
@@ -266,13 +271,21 @@ class EncodeDataset(torch.utils.data.Dataset):
             self.target_size = len(self.distinct_features)
 
     def __len__(self):
+        if self.samples_mode:
+            n_sequences = len(self.samples)
+        else:
+            n_sequences = self.intervals_length_sums[-1]
         if not self.cell_wise or self.multi_ct_target:
-            return self.intervals_length_sums[-1]
-        return self.n_cell_types * self.intervals_length_sums[-1]
+            return n_sequences
+        return self.n_cell_types * n_sequences
 
     def __getitem__(self, idx):
-        chrom, pos, cell_type_idx = self._get_chrom_pos_cell_by_idx(idx)
-        retrieved_sample = self._retrieve(chrom, pos, cell_type_idx)
+        if self.samples_mode:
+            sample_idx, cell_type_idx = self._get_sample_cell_by_idx(idx)
+            retrieved_sample = self._retrieve_sample_by_idx(sample_idx, cell_type_idx)
+        else:
+            chrom, pos, cell_type_idx = self._get_chrom_pos_cell_by_idx(idx)
+            retrieved_sample = self._retrieve(chrom, pos, cell_type_idx)
         if self.transform is not None:
             retrieved_sample = self.transform(retrieved_sample)
         if self.cell_wise:
@@ -280,6 +293,30 @@ class EncodeDataset(torch.utils.data.Dataset):
         retrieved_seq = retrieved_sample[0]
         retrieved_target = retrieved_sample[2]
         return retrieved_seq, retrieved_target
+    
+    def _get_sample_cell_by_idx(self, idx):
+        if self.cell_wise and not self.multi_ct_target:
+            cell_type_idx = idx % self.n_cell_types
+            sample_idx = idx // self.n_cell_types
+        else:
+            cell_type_idx = 0
+            sample_idx = idx
+        return sample_idx, cell_type_idx
+
+    def _retrieve_sample_by_idx(self, sample_idx, cell_type_idx):
+        chrom, start, end, chrom_sample_idx = self.samples[sample_idx]
+        context = self.sequence_length - (end - start)
+        if context != 0:
+            start -= context // 2
+            end += context // 2 + context % 2
+        track_vector = self.target.get_feature_data(chrom, chrom_sample_idx)
+        target, target_mask, cell_type = self._track_vector_to_target(track_vector, cell_type_idx)
+
+        retrieved_seq = self.reference_sequence.get_encoding_from_coords(
+            chrom, start, end, self.strand
+        )
+
+        return retrieved_seq, cell_type, target, target_mask
 
     def _get_chrom_pos_cell_by_idx(self, idx):
         """
@@ -297,6 +334,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         tuple(str, int, int)
             Chromosome identifier, position in the chromosome, cell type
         """
+
         if self.cell_wise and not self.multi_ct_target:
             cell_type_idx = idx % self.n_cell_types
             position_idx = idx // self.n_cell_types
@@ -348,29 +386,9 @@ class EncodeDataset(torch.utils.data.Dataset):
         """
         bin_start = position - self._start_radius
         bin_end = position + self._end_radius
-        targets = self.target.get_feature_data(chrom, bin_start, bin_end)
-        if self.cell_wise:
-            if self.multi_ct_target:
-                target = []
-                for cell_type_idx in range(self.n_cell_types):
-                    ct_target_idx = self._feature_indices_by_cell_type_index[
-                        cell_type_idx
-                    ]
-                    ct_target = targets[ct_target_idx].astype(np.float32)
-                    target.append(ct_target)
-                target = np.array(target).astype(np.float32)
-                target_mask = self.target_mask
-                cell_type = 0.0
-            else:
-                target_idx = self._feature_indices_by_cell_type_index[cell_type_idx]
-                target = targets[target_idx].astype(np.float32)
-                target_mask = target_idx != _FEATURE_NOT_PRESENT
-                cell_type = np.zeros(self.n_cell_types, dtype=np.float32)
-                cell_type[cell_type_idx] = 1
-        else:
-            target = targets.astype(np.float32)
-            target_mask = np.ones_like(target)
-            cell_type = None
+        track_vector = self.target.get_feature_data(chrom, bin_start, bin_end)
+
+        target, target_mask, cell_type = self._track_vector_to_target(track_vector, cell_type_idx)
 
         window_start = bin_start - self._surrounding_sequence_radius
         window_end = bin_end + self._surrounding_sequence_radius
@@ -383,6 +401,48 @@ class EncodeDataset(torch.utils.data.Dataset):
             return None
 
         return retrieved_seq, cell_type, target, target_mask
+
+    def _track_vector_to_target(self, track_vector, cell_type_idx=None):
+        if self.cell_wise:
+            if self.multi_ct_target:
+                target = []
+                for cell_type_idx in range(self.n_cell_types):
+                    ct_target_idx = self._feature_indices_by_cell_type_index[
+                        cell_type_idx
+                    ]
+                    ct_target = track_vector[..., ct_target_idx].astype(np.float32)
+                    target.append(ct_target)
+                target = np.array(target).astype(np.float32)
+                target_mask = self.target_mask
+                cell_type = 0.0
+            else:
+                target_idx = self._feature_indices_by_cell_type_index[cell_type_idx]
+                target = track_vector[..., target_idx].astype(np.float32)
+                target_mask = target_idx != _FEATURE_NOT_PRESENT
+                cell_type = np.zeros(self.n_cell_types, dtype=np.float32)
+                cell_type[cell_type_idx] = 1
+        else:
+            target = track_vector.astype(np.float32)
+            target_mask = np.ones_like(target)
+            cell_type = None
+        if target.shape != target_mask.shape:
+            target_mask = np.repeat(np.expand_dims(target_mask, axis=1), target.shape[1], axis=1)
+        return target, target_mask, cell_type
+
+    def _target_to_track_vector(self, target):
+        if self.cell_wise:
+            if not self.multi_ct_target:
+                raise ValueError('Impossible to recover a vector of tracks \
+                    from a single cell type sample')
+            track_vector = np.full(len(self.distinct_features), _FEATURE_NOT_PRESENT)
+            for cell_type_idx in range(target.shape[0]):
+                for feature_idx in range(target.shape[1]):
+                    track_vector_idx = self._feature_indices_by_cell_type_index[cell_type_idx, feature_idx]
+                    if track_vector_idx != _FEATURE_NOT_PRESENT:
+                        track_vector[track_vector_idx] = target[cell_type_idx, feature_idx]
+        else:
+            track_vector = target
+        return track_vector
 
     def _check_retrieved_sequence(self, sequence, chrom, position) -> bool:
         """Checks whether retrieved sequence is acceptable.
@@ -421,23 +481,8 @@ class EncodeDataset(torch.utils.data.Dataset):
     def _construct_ref_genome(self):
         return Genome(self.reference_sequence_path)
 
-    def _construct_target(self, quantitative_features,
-                                quantitative_features_agg_function):
-        if quantitative_features:
-            feature_path = dict(
-                [line.strip().split("\t") for line in open(self.target_path)]
-            )
-            feature_path = [feature_path[feature] for feature in self.distinct_features]
-
-            return qGenomicFeatures(self.distinct_features, 
-                                    feature_path,
-                                    agg_function = quantitative_features_agg_function)
-        else:
-            return GenomicFeatures(
-                self.target_path,
-                self.distinct_features,
-                feature_thresholds=self.feature_thresholds,
-            )
+    def _construct_target(self):
+        return self.target_class(**self.target_init_kwargs)
 
     def _parse_distinct_feature(self, distinct_feature):
         """
@@ -601,12 +646,11 @@ def encode_worker_init_fn(worker_id):
     # which is not multiprocessing-safe, see:
     # https://github.com/mdshw5/pyfaidx/issues/167#issuecomment-667591513
     dataset.reference_sequence = dataset._construct_ref_genome()
-    # and similarly for targets (as they use bigWig file handlers)
-    # which are not multiprocessing-safe, see
-    # see https://github.com/deeptools/pyBigWig/issues/74#issuecomment-439520821
-    dataset.target = dataset._construct_target(dataset.quantitative_features,
-                                                dataset.quantitative_features_agg_function)
+    # and similarly for targets (as they use bigWig file handlers
+    # for quantitative features, which are not multiprocessing-safe,
+    # see https://github.com/deeptools/pyBigWig/issues/74#issuecomment-439520821 )
+    dataset.target = dataset._construct_target()
     
-    # some tests indicates that after re-initialization of the dataset unused data loader are not
-    # cleared from memory. This is experimental feature aiming to fix this problem
+    # some tests indicate that after re-initialization of the dataset unused data loader are not
+    # cleared from memory. I hope this will fix this problem
     gc.collect()

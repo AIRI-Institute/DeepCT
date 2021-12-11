@@ -239,6 +239,8 @@ class TrainEncodeDatasetModel(object):
         self.n_epochs = n_epochs
         self.nth_step_report_stats = report_stats_every_n_steps
         self.nth_step_save_checkpoint = None
+        if log_embeddings_every_n_steps == "None":
+            log_embeddings_every_n_steps = None
         self.nth_step_log_embeddings = log_embeddings_every_n_steps
 
         if not save_checkpoint_every_n_steps:
@@ -258,16 +260,16 @@ class TrainEncodeDatasetModel(object):
 
         torch.set_num_threads(cpu_n_threads)
 
-        self.device = torch.device(device)
         self.data_parallel = data_parallel
-
         if self.data_parallel:
-            self.model = nn.DataParallel(model)
+            self.model = nn.DataParallel(model, device_ids=device, output_device=device[0])
+            self.device = self.model.device_ids[0]
             logger.debug("Wrapped model in DataParallel")
         else:
-            self.model.to(self.device)
-            self.criterion.to(self.device)
-            logger.debug(f"Set modules to use device {device}")
+            self.device = torch.device(device)
+        self.model.to(self.device)
+        self.criterion.to(self.device)
+        logger.debug(f"Set modules to use device {device}")
 
         os.makedirs(output_dir, exist_ok=True)
         self.output_dir = output_dir
@@ -330,16 +332,18 @@ class TrainEncodeDatasetModel(object):
                 checkpoint["state_dict"], self.model
             )
 
-            self._start_step = checkpoint["step"]
-            # if self._start_step >= self.n_epochs:
-            #    self.n_epochs += self._start_step
+            if "step" in checkpoint:
+                self._start_step = checkpoint["step"]
 
-            self._min_loss = checkpoint["min_loss"]
-            self.optimizer.load_state_dict(checkpoint["optimizer"])
-            for state in self.optimizer.state.values():
-                for k, v in state.items():
-                    if isinstance(v, torch.Tensor):
-                        state[k] = v.to(self.device)
+            if "min_loss" in checkpoint:
+                self._min_loss = checkpoint["min_loss"]
+
+            if "optimizer" in checkpoint:
+                self.optimizer.load_state_dict(checkpoint["optimizer"])
+                for state in self.optimizer.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor):
+                            state[k] = v.to(self.device)
 
             logger.info(
                 ("Resuming from checkpoint: step {0}, min loss {1}").format(
@@ -511,6 +515,7 @@ class TrainEncodeDatasetModel(object):
             target_mask,
             loss.item(),
         )
+        return return_values
 
     def _update_and_log_lr_if_needed(self, total_steps, validation_loss=None, log=True):
         # torch.optim.lr_scheduler.ReduceLROnPlateau is the only scheduler
