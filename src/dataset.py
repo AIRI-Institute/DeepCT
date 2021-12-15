@@ -21,22 +21,15 @@ class EncodeDataset(torch.utils.data.Dataset):
     ----------
     reference_sequence_path : str
         Path to reference sequence `fasta` file from which to create examples.
-    target_path : str
-        in case of bed-like qualitative features, it should be
-        path to tabix-indexed, compressed BED file (`*.bed.gz`) of genomic
-        coordinates mapped to the genomic features we want to predict.
-        In case of bigWig-like quantitative features, it should be a path
-        to file mapping each feature label to corresponding bigWig file
-    quantitative_features: bool
-        whether features are quantitative or qualitative
-    quantitative_features_agg_function: str
-        aggregation function used for quantitative features, defines how
-        to aggregate feature values across target genomic interval
     distinct_features : list(str)
         List of distinct `cell_type|feature_name|info` combinations available,
         e.g. `["K562|ZBTB33|None", "HCF|DNase|None", "HUVEC|DNase|None"]`.
     target_features : list(str)
         List of names of features we aim to predict, e.g. ["CTCF", "DNase"].
+    target_class : selene.sdk.Target,
+        selene.sdk target class      
+    target_init_kwargs : dict,
+        any kwargs to pass to target_class init function
     intervals : list(tuple)
         Intervals to sample from in the format `(chrom, start, end)`,
         e.g. [("chr1", 550, 590), ("chr2", 6100, 6315)].
@@ -81,6 +74,10 @@ class EncodeDataset(torch.utils.data.Dataset):
         The reference sequence that examples are created from.
     target : selene_sdk.targets.Target
         The `selene_sdk.targets.Target` object holding the features.
+    target_class : selene.sdk.Target
+        The `selene_sdk.targets.Target` class
+    target_init_kwargs : dict
+        any kwargs to pass to target_class init function
     target_features : list(str)
         List of names of features we aim to predict, e.g. ["CTCF", "DNase"].
     cell_wise : bool
@@ -119,12 +116,9 @@ class EncodeDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         reference_sequence_path,
-        target_path,
         distinct_features,
         target_features,
         intervals,
-        quantitative_features=False,
-        quantitative_features_agg_function="max",
         cell_wise=True,
         samples_mode=False,
         transform=PermuteSequenceChannels(),
@@ -143,10 +137,7 @@ class EncodeDataset(torch.utils.data.Dataset):
 
         self.distinct_features = distinct_features
         self.target_features = target_features
-        self.target_path = target_path
         self.feature_thresholds = feature_thresholds
-        self.quantitative_features = quantitative_features
-        self.quantitative_features_agg_function = quantitative_features_agg_function
         
         # we won't keep those tracks (i.e celltype-feature combintations)
         # where feature is not in target_features
@@ -269,6 +260,19 @@ class EncodeDataset(torch.utils.data.Dataset):
                 self.target_size = self.n_target_features
         else:
             self.target_size = len(self.distinct_features)
+        
+        # update transforms: some of transforms may need to get 
+        # dataset object 
+
+        try: # transform might be an object with method set_masks
+                self.transform.set_tracks_thresholds(self)
+        except AttributeError:
+            for tr in self.transform.transforms:
+                try:
+                    tr.set_tracks_thresholds(self)
+                    print ("Info: set_tracks_thresholds set for transform ",str(tr))
+                except AttributeError:
+                    pass
 
     def __len__(self):
         if self.samples_mode:

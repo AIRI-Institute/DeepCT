@@ -131,14 +131,39 @@ class ClipTargets(torch.nn.Module):
         Both are broadcast against a (see numpy.clip).
     """
 
-    def __init__(self, amin=None, amax=None):
+    def __init__(self, amin=None, amax=None, clip_thresholds_path=None):
         super().__init__()
         self.amin = amin
         self.amax = amax
+        self.clip_thresholds_path = clip_thresholds_path
 
     def forward(self, sample):
         targets = np.clip(sample[2], self.amin, self.amax)
         return (*sample[:2], targets, sample[3])
+    
+    def set_tracks_thresholds(self, dataset_object):
+        self.tracks = dataset_object.distinct_features
+        if self.clip_thresholds_path is not None:
+            min_vals = np.array([-np.inf]*len(self.tracks))
+            max_vals = np.array([np.inf]*len(self.tracks))
+            with open(self.clip_thresholds_path) as fin:
+                for line in fin:
+                    line = line.strip().split()
+                    track, amin, amax = line[0], eval(line[1]), eval(line[2])
+                    #print (track, amin, amax)
+                    if not track in self.tracks:
+                        continue
+                    track_id = self.tracks.index(track)
+                    # print (track, track_id, amin, amax)
+                    min_vals[track_id] = amin
+                    max_vals[track_id] = amax
+            
+            # _track_vector_to_target returns: target, target_mask, cell_type
+            self.amin = dataset_object._track_vector_to_target(min_vals)[0]
+            self.amax = dataset_object._track_vector_to_target(max_vals)[0]
+            
+            # ensure that we found amin/amax info for all tracks
+            assert np.all(np.isfinite(self.amax))            
 
 
 class ArrayTransform(torch.nn.Module):
