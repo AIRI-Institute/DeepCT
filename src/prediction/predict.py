@@ -9,9 +9,11 @@ import warnings
 from time import time
 
 import numpy as np
+import pandas as pd
 import pyfaidx
 import torch
 import torch.nn as nn
+from scipy.stats import mannwhitneyu
 from selene_sdk.predict._common import (
     _pad_sequence,
     _truncate_sequence,
@@ -35,7 +37,10 @@ from selene_sdk.predict.predict_handlers import (  # , WritePredictionsHandler_
     WritePredictionsMultiCtBigWigHandler,
 )
 from selene_sdk.utils import initialize_logger, load_model_from_state_dict
+from statsmodels.stats.multitest import multipletests
 from tqdm import tqdm
+
+from src.dataset import _FEATURE_NOT_PRESENT
 
 # from .predict_handlers import WriteRefAltHandler
 
@@ -130,6 +135,7 @@ class AnalyzeSequences(object):
         features,
         n_cell_types,
         reference_sequence,
+        center_bin=200,
         batch_size=64,
         device="cpu",
         data_parallel=False,
@@ -166,6 +172,7 @@ class AnalyzeSequences(object):
         self._end_radius = self._start_radius
         if sequence_length % 2 != 0:
             self._start_radius += 1
+        self.center_bin = center_bin
 
         self.batch_size = batch_size
         self.features = features
@@ -182,6 +189,21 @@ class AnalyzeSequences(object):
                     continue
                 if cell_type not in self._cell_types:
                     self._cell_types.append(cell_type)
+            self.n_target_features = len(self.features)
+            self._feature_indices_by_cell_type_index = np.full(
+                (self.n_cell_types, self.n_target_features), _FEATURE_NOT_PRESENT
+            )
+            for distinct_feature_index, distinct_feature in enumerate(
+                distinct_features
+            ):
+                feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
+                if feature_name not in self.features:
+                    continue
+                feature_index = self.features.index(feature_name)
+                cell_type_index = self._cell_types.index(cell_type)
+                self._feature_indices_by_cell_type_index[cell_type_index][
+                    feature_index
+                ] = distinct_feature_index
         else:
             self._cell_types = list(map(str, range(self.n_cell_types)))
 
@@ -191,6 +213,7 @@ class AnalyzeSequences(object):
         #                                                      # to make it compatible with model's weights dtype later
         # self.cell_types_one_hot[np.diag_indices(self.n_cell_types)] = 1
         self._write_mem_limit = write_mem_limit
+        print("Successfully created analyzer object")
 
     def _parse_distinct_feature(self, distinct_feature):
         """
@@ -398,7 +421,10 @@ class AnalyzeSequences(object):
         with torch.no_grad():
             outputs = self.model(batch_sequences, batch_cell_types)
 
-        predictions = torch.sigmoid(outputs)
+        means = outputs[:, -1:, :]
+        deviations = outputs[:, :-1, :]
+        predictions = means + deviations
+        # predictions = torch.sigmoid(outputs)
         return predictions
 
     def _get_predictions(self, sequences, batch_ids):
@@ -585,6 +611,222 @@ class AnalyzeSequences(object):
 
         reporter.write_to_file()
         reporter.close_handlers()
+
+    def variant_effect_prediction(
+        self,
+        input_path,
+        output_dir,
+    ):
+        """
+        Get model score predictions for variants specified in a VCF file.
+        Two sets of scores for sequences containing a reference allele and
+        a variant allele. Final scores are averaged model outputs for
+        200 sequences containing the specified allele in different locations
+        of the sequence.
+
+        Parameters
+        ----------
+        input_path : str
+            Input path to the BED file.
+        output_dir : str
+            Output directory to write the model predictions.
+
+        Returns
+        -------
+        None
+            Writes the output to file(s) in `output_dir`. Filename will
+            match that specified in the filepath.
+
+        """
+        output_dir = os.path.join(
+            output_dir, os.path.splitext(os.path.basename(input_path))[0]
+        )
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        np.save(
+            os.path.join(output_dir, "measured_tracks_mask.npy"),
+            self._feature_indices_by_cell_type_index.T,
+        )
+
+        variants = pd.read_csv(input_path, sep="\t", header=None)
+        variants = variants.drop(columns=[2, 5, 6])
+        variants.columns = ["CHROM", "POS", "REF", "ALT", "NOTE"]
+        variants[["AUSTATUS", "FIDSID"]] = variants["NOTE"].str.split(";", expand=True)
+        variants["AUSTATUS"] = variants["AUSTATUS"].str.slice(start=9)
+        variants["FIDSID"] = variants["FIDSID"].str.slice(start=7)
+        variants[["FID", "SID"]] = variants["FIDSID"].str.split(".", expand=True)
+        variants = variants.drop(columns=["FIDSID", "NOTE"])
+
+        # set up for mean effect prediction calculations
+        case_effect_sum = 0
+        control_effect_sum = 0
+        n_bad_cases = 0
+        n_bad_controls = 0
+        case_effects = []
+        control_effects = []
+
+        # set up for family-specific effect prediction difference distribution calculation
+        family_specific_effect_diff = []
+
+        fids = variants["FID"].unique()
+        for fid in tqdm(fids):
+            family_variants = variants[variants["FID"] == fid]
+
+            # set up for matched proband - sibling distribution
+            family_case_effect = 0
+            family_control_effect = 0
+            n_bad_family_cases = 0
+            n_bad_family_controls = 0
+            for _, variant in family_variants.iterrows():
+                pos = int(variant["POS"]) - 1
+                chrom = variant["CHROM"]
+                ref = variant["REF"]
+                alt = variant["ALT"]
+                austatus = variant["AUSTATUS"]
+
+                if ref not in self.reference_sequence.BASES_ARR:
+                    raise ValueError(
+                        f"Ref allele from VCF is not one of "
+                        f"{self.reference_sequence.BASES_ARR}"
+                    )
+
+                # query a sequence of length 1200 to cut into batch samples later
+                batch_start = pos - self.center_bin // 2 - self._start_radius + 1
+                batch_end = pos + self.center_bin // 2 + self._end_radius
+                batch_sequence = self.reference_sequence.get_encoding_from_coords(
+                    chrom, batch_start, batch_end, strand="+", pad=False
+                )
+                variant_idx = pos - batch_start
+
+                # compare retrieved sequence encoding with expected ref encoding
+                seq_ref_letter = self.reference_sequence.INDEX_TO_BASE[
+                    np.where(batch_sequence[variant_idx] == 1)[0][0]
+                ]
+                if seq_ref_letter != ref:
+                    if austatus == "case":
+                        n_bad_family_cases += 1
+                        n_bad_cases += 1
+                    else:
+                        n_bad_family_controls += 1
+                        n_bad_controls += 1
+                    with open(os.path.join(output_dir, "wrong_refs.txt"), "a") as f:
+                        for key in ["CHROM", "POS", "REF", "ALT", "FID", "SID"]:
+                            f.write(f"{variant[key]}\t")
+                        f.write("\n")
+                    continue
+                    raise ValueError(
+                        f"Expected ref allele {ref} from VCF, retrieved "
+                        f"{seq_ref_letter} from fasta in {chrom} position {pos}."
+                    )
+
+                # create batch
+                batch = []
+                for seq_start in range(self.center_bin):
+                    seq_end = seq_start + self.sequence_length
+
+                    sample = batch_sequence[seq_start:seq_end]
+                    batch.append(sample)
+                batch = np.stack(batch)
+
+                # get scores for reference sequences
+                preds = self._predict(batch)
+                preds = preds.cpu().numpy()
+                mean_preds = preds.mean(axis=0)
+
+                # get scores for sequences with variant
+                if ref != alt:
+                    batch_alt_sequence = batch_sequence.copy()
+                    alt_encoding = self.reference_sequence.sequence_to_encoding(alt)
+                    batch_alt_sequence[variant_idx] = alt_encoding
+
+                    # create batch
+                    batch = []
+                    for seq_start in range(self.center_bin):
+                        seq_end = seq_start + self.sequence_length
+
+                        sample = batch_alt_sequence[seq_start:seq_end]
+                        batch.append(sample)
+                    batch = np.stack(batch)
+
+                    alt_preds = self._predict(batch)
+                    alt_preds = alt_preds.cpu().numpy()
+                    mean_alt_preds = alt_preds.mean(axis=0)
+                else:
+                    raise ValueError(
+                        f"Ref allele ({ref}) cannot be the same as alt"
+                        f" ({alt}) in {chrom} position {pos}."
+                    )
+
+                # variant score
+                score = mean_alt_preds - mean_preds
+
+                # update family stats
+                if austatus == "case":
+                    family_case_effect = family_case_effect + score
+                    case_effects.append(score)
+                else:
+                    family_control_effect = family_control_effect + score
+                    control_effects.append(score)
+            family_counts = family_variants["AUSTATUS"].value_counts()
+            n_family_cases = family_counts["case"] - n_bad_family_cases
+            n_family_controls = family_counts["control"] - n_bad_family_controls
+
+            # update total case/control effects
+            case_effect_sum = case_effect_sum + family_case_effect
+            control_effect_sum = control_effect_sum + family_control_effect
+
+            # compute family effect mean
+            family_case_effect = family_case_effect / n_family_cases
+            family_control_effect = family_control_effect / n_family_controls
+
+            # write per-family score differences
+            np.save(
+                os.path.join(output_dir, f"mean_case_effect_{fid}.npy"),
+                family_case_effect,
+            )
+            np.save(
+                os.path.join(output_dir, f"mean_control_effect_{fid}.npy"),
+                family_control_effect,
+            )
+
+        variant_counts = variants["AUSTATUS"].value_counts()
+        n_total_cases = variant_counts["case"] - n_bad_cases
+        n_total_controls = variant_counts["control"] - n_bad_controls
+
+        mean_case_effect = case_effect_sum / n_total_cases
+        mean_control_effect = control_effect_sum / n_total_controls
+
+        # write mean case and control effects
+        np.save(
+            os.path.join(output_dir, "total_mean_case_effect.npy"), mean_case_effect
+        )
+        np.save(
+            os.path.join(output_dir, "total_mean_control_effect.npy"),
+            mean_control_effect,
+        )
+
+        case_effects = np.stack(case_effects)
+        control_effects = np.stack(control_effects)
+        np.save(os.path.join(output_dir, "all_case_effects.npy"), case_effects)
+        np.save(os.path.join(output_dir, "all_control_effects.npy"), control_effects)
+
+        # run Mann-Whitney U-Test
+        pvals = np.zeros(case_effects.shape[1:])
+        for ct in range(pvals.shape[0]):
+            for feat in range(pvals.shape[1]):
+                _, pval = mannwhitneyu(
+                    case_effects[:, ct, feat], control_effects[:, ct, feat]
+                )
+                pvals[ct, feat] = pval
+
+        # get corrected pvals via Benjamini-Hochberg procedure
+        reject, pvals_corrected, _, _ = multipletests(
+            pvals.flatten(), alpha=0.05, method="fdr_bh"
+        )
+        pvals_corrected = pvals_corrected.reshape(pvals.shape)
+        reject = reject.reshape(pvals.shape)
+        np.save(os.path.join(output_dir, "mwu_corrected_pvals.npy"), pvals_corrected)
+        np.save(os.path.join(output_dir, "mwu_corrected_reject.npy"), reject)
 
     def get_predictions(
         self,
