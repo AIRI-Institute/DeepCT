@@ -18,7 +18,7 @@ model: {
 
 # TODO: some values could be copied automatically from the model class
 analyze_sequences: !obj:src.prediction.predict.AnalyzeSequences {
-    trained_model_path: /home/msindeeva/DeepCT/best_model.pth.tar, #DeepCT_outputs/boix/qDeepCT_mpi/complete_clique1_with0/kfold_10folds_LR0001/no_overlap/2021-12-07-20-56-20/checkpoint.pth.tar,
+    trained_model_path: /home/msindeeva/DeepCT/40_features_q_mpi_highQCsamples/best_model.pth.tar,
     sequence_length: 1000,
     features: !obj:selene_sdk.utils.load_features_list {
         input_path: /mnt/datasets/DeepCT/dataset_data/q_features_all/target_features.txt
@@ -38,8 +38,9 @@ analyze_sequences: !obj:src.prediction.predict.AnalyzeSequences {
 }
 
 variant_effect_prediction: {
-    vcf_files: ['/home/msindeeva/DeepCT/An_etal.snv.hg19.TSS_flank50Kbp.vcf'],
+    vcf_files: ['/home/msindeeva/DeepCT/An_etal.snv.hg19.TSS_flank50Kbp.vcf', '/home/msindeeva/DeepCT/Zhou_etal.snv.hg19.TSS_flank50Kbp.vcf'],
     output_dir: /home/msindeeva/DeepCT/predictions/40_features_q_mpi_highQCsamples,
+    fdr: 0.1,
 }
 
 random_seed: 1447

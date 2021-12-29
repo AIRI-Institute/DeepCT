@@ -45,6 +45,21 @@ from src.dataset import _FEATURE_NOT_PRESENT
 # from .predict_handlers import WriteRefAltHandler
 
 
+def bh(pvals, fdr=0.05):
+    ranks = np.argsort(pvals) + 1
+    n_tests = len(pvals)
+    corrected_pvals = []
+    for i in range(len(pvals)):
+        pval = pvals[i]
+        rank = ranks[i]
+        corrected_pval = rank / n_tests * fdr
+        corrected_pvals.append(corrected_pval)
+    corrected_pvals = np.array(corrected_pvals)
+    bh_lower_idx = np.where((pvals < corrected_pvals) == True)
+    fdr_pval_cutoff = pvals[bh_lower_idx].max()
+    return corrected_pvals, fdr_pval_cutoff
+
+
 class AnalyzeSequences(object):
     """
     Score sequences and their variants using the predictions made
@@ -616,20 +631,25 @@ class AnalyzeSequences(object):
         self,
         input_path,
         output_dir,
+        fdr=0.1,
     ):
         """
         Get model score predictions for variants specified in a VCF file.
         Two sets of scores for sequences containing a reference allele and
         a variant allele. Final scores are averaged model outputs for
-        200 sequences containing the specified allele in different locations
+        `self.center_bin` sequences containing the specified allele in different locations
         of the sequence.
+        Note: This procedure will ignore `self.batch_size` in favor of gathering
+        `self.center_bin` sequences into a batch.
 
         Parameters
         ----------
         input_path : str
-            Input path to the BED file.
+            Input path to the VCF file.
         output_dir : str
             Output directory to write the model predictions.
+        fdr : float
+            FDR for Benjamini-Hochberg p-value correction procedure.
 
         Returns
         -------
@@ -758,7 +778,7 @@ class AnalyzeSequences(object):
                     )
 
                 # variant score
-                score = mean_alt_preds - mean_preds
+                score = np.abs(mean_alt_preds - mean_preds)
 
                 # update family stats
                 if austatus == "case":
@@ -768,26 +788,34 @@ class AnalyzeSequences(object):
                     family_control_effect = family_control_effect + score
                     control_effects.append(score)
             family_counts = family_variants["AUSTATUS"].value_counts()
-            n_family_cases = family_counts["case"] - n_bad_family_cases
-            n_family_controls = family_counts["control"] - n_bad_family_controls
+            if "case" in family_counts:
+                n_family_cases = family_counts["case"] - n_bad_family_cases
 
-            # update total case/control effects
-            case_effect_sum = case_effect_sum + family_case_effect
-            control_effect_sum = control_effect_sum + family_control_effect
+                # update total case/control effects
+                case_effect_sum = case_effect_sum + family_case_effect
 
-            # compute family effect mean
-            family_case_effect = family_case_effect / n_family_cases
-            family_control_effect = family_control_effect / n_family_controls
+                # compute family effect mean
+                family_case_effect = family_case_effect / n_family_cases
 
-            # write per-family score differences
-            np.save(
-                os.path.join(output_dir, f"mean_case_effect_{fid}.npy"),
-                family_case_effect,
-            )
-            np.save(
-                os.path.join(output_dir, f"mean_control_effect_{fid}.npy"),
-                family_control_effect,
-            )
+                # write per-family score differences
+                np.save(
+                    os.path.join(output_dir, f"mean_abs_case_effect_{fid}.npy"),
+                    family_case_effect,
+                )
+            if "control" in family_counts:
+                n_family_controls = family_counts["control"] - n_bad_family_controls
+
+                # update total case/control effects
+                control_effect_sum = control_effect_sum + family_control_effect
+
+                # compute family effect mean
+                family_control_effect = family_control_effect / n_family_controls
+
+                # write per-family score differences
+                np.save(
+                    os.path.join(output_dir, f"mean_abs_control_effect_{fid}.npy"),
+                    family_control_effect,
+                )
 
         variant_counts = variants["AUSTATUS"].value_counts()
         n_total_cases = variant_counts["case"] - n_bad_cases
@@ -798,17 +826,19 @@ class AnalyzeSequences(object):
 
         # write mean case and control effects
         np.save(
-            os.path.join(output_dir, "total_mean_case_effect.npy"), mean_case_effect
+            os.path.join(output_dir, "total_mean_abs_case_effect.npy"), mean_case_effect
         )
         np.save(
-            os.path.join(output_dir, "total_mean_control_effect.npy"),
+            os.path.join(output_dir, "total_mean_abs_control_effect.npy"),
             mean_control_effect,
         )
 
         case_effects = np.stack(case_effects)
         control_effects = np.stack(control_effects)
-        np.save(os.path.join(output_dir, "all_case_effects.npy"), case_effects)
-        np.save(os.path.join(output_dir, "all_control_effects.npy"), control_effects)
+        np.save(os.path.join(output_dir, "all_case_ref_outputs.npy"), case_effects)
+        np.save(
+            os.path.join(output_dir, "all_control_ref_outputs.npy"), control_effects
+        )
 
         # run Mann-Whitney U-Test
         pvals = np.zeros(case_effects.shape[1:])
@@ -818,15 +848,16 @@ class AnalyzeSequences(object):
                     case_effects[:, ct, feat], control_effects[:, ct, feat]
                 )
                 pvals[ct, feat] = pval
+        np.save(os.path.join(output_dir, "mwu_abs_pvals.npy"), pvals)
 
         # get corrected pvals via Benjamini-Hochberg procedure
-        reject, pvals_corrected, _, _ = multipletests(
-            pvals.flatten(), alpha=0.05, method="fdr_bh"
+        bh_pvals, fdr_pval_cutoff = bh(pvals.flatten(), fdr=fdr)
+        bh_pvals = bh_pvals.reshape(pvals.shape)
+
+        np.save(os.path.join(output_dir, "mwu_abs_bh_corrected_pvals.npy"), bh_pvals)
+        np.save(
+            os.path.join(output_dir, f"mwu_abs_bh_fdr{fdr}_cutoff.npy"), fdr_pval_cutoff
         )
-        pvals_corrected = pvals_corrected.reshape(pvals.shape)
-        reject = reject.reshape(pvals.shape)
-        np.save(os.path.join(output_dir, "mwu_corrected_pvals.npy"), pvals_corrected)
-        np.save(os.path.join(output_dir, "mwu_corrected_reject.npy"), reject)
 
     def get_predictions(
         self,
