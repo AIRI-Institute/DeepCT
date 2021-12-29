@@ -225,7 +225,7 @@ class Quantitative2Qualitative(ArrayTransform):
         return map(lambda y: y > self.threshold, x)
 
 
-class MeanAndDeviation2AbsolutePredication(ArrayTransform):
+class MeanAndDeviation2AbsolutePrediction(ArrayTransform):
     """
     Convert targets from mean_positional_value and cell-type specific deviations
     to the form of absolute cell-type specific value, i.e
@@ -307,6 +307,23 @@ class Concat_batches(ArrayTransform):
 # Define a few useful transforms
 QUANTITAVE_PREDICTION_THRESHOLD = 1.4816
 
+base_transform = Concat_batches(
+    transform_predictions=True,
+    transform_targets=True,
+    transform_masks=True,
+)
+
+scores2prob_transform = torchvision.transforms.Compose(
+    [
+        Quantitative2Sigmoid(
+            transform_predictions=True,
+            transform_targets=False,
+            threshold=0.0,
+        ),  # apply sigmoid to output scores
+        base_transform,
+    ]
+)
+
 quant2prob_transform = torchvision.transforms.Compose(
     [
         Quantitative2Sigmoid(
@@ -315,15 +332,29 @@ quant2prob_transform = torchvision.transforms.Compose(
             threshold=QUANTITAVE_PREDICTION_THRESHOLD,
         ),  # transform predictions
         Quantitative2Qualitative(
-            transform_predictions=True,
-            transform_targets=False,
+            transform_predictions=False,
+            transform_targets=True,
             threshold=QUANTITAVE_PREDICTION_THRESHOLD,
         ),  # transform targets
-        Concat_batches(
-            transform_predictions=True,
-            transform_targets=True,
-            transform_masks=True,
+        base_transform,
+    ]
+)
+
+meandev2prob = torchvision.transforms.Compose(
+    [
+        MeanAndDeviation2AbsolutePrediction(
+            transform_predictions=True, transform_targets=False
         ),
+        quant2prob_transform,
+    ]
+)
+
+meandev2val = torchvision.transforms.Compose(
+    [
+        MeanAndDeviation2AbsolutePrediction(
+            transform_predictions=True, transform_targets=False
+        ),
+        base_transform,
     ]
 )
 
@@ -332,10 +363,4 @@ preds2mpv_transform = torchvision.transforms.Compose(
         MeanAverageValueBasedPredictor(),
         quant2prob_transform,
     ]
-)
-
-base_transform = Concat_batches(
-    transform_predictions=True,
-    transform_targets=True,
-    transform_masks=True,
 )
