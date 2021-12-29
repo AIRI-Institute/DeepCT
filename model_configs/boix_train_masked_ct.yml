@@ -11,7 +11,6 @@ model: {
     path: src/deepct_model_multi_ct.py,
     class: DeepCT,
     checkpoint_resume: ,
-    #checkpoint_resume: DeepCT_outputs/boix/ct_v2/complete_clique1_with0_fix/kfold_10folds_LR0001/no_overlap/2021-12-24-14-43-25/checkpoint.pth.tar, 
     checkpoint_epoch: 0,
     checkpoint_chunk: 0,
     class_args: {
@@ -34,8 +33,6 @@ dataset: {
     seq_fold_ids: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/split_intervals_no_overlap_k10.npy,
     train_sampler_class: LargeRandomSampler,
     train_sampler_args: {replacement: False},
-    #validation_sampler_class: SubsetRandomSampler,
-    #validation_sampler_args: {num_samples: 1000000},
 
     distinct_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/distinct_features.txt,
     target_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/target_features.txt,
@@ -45,7 +42,12 @@ dataset: {
 
     dataset_args: {
         reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
-        target_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/sorted_data.bed.gz,
+        target_class: !import selene_sdk.targets.GenomicFeatures,
+        target_init_kwargs: {
+            input_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/sorted_data.bed.gz,
+            feature_thresholds: 0.5,
+        },
+        target_path: None,
         cell_wise: True,
         multi_ct_target: True,
         sequence_length: 1000,
@@ -53,10 +55,10 @@ dataset: {
         feature_thresholds: 0.5,
         position_skip: 200,
         n_folds: 10,                    
-        fold: 0,                        # !!!
+        fold: 0,
     },
     loader_args: {
-        batch_size: 256,  # !!!
+        batch_size: 256,
         num_workers: 16,
         pin_memory: True,
     },
@@ -70,33 +72,17 @@ dataset: {
     },
     val_transform: !obj:src.transforms.PermuteSequenceChannels {}
 }
-train_model: !obj:src.train.ct_masked_train.TrainEncodeDatasetModel {
-    n_epochs: 40,  # !!!
-    report_stats_every_n_steps: 2000,
-    save_checkpoint_every_n_steps: 2000,
+train_model: !obj:src.train.ct_masked_train.TrainMaskedCTModel {
+    n_epochs: 40,
     report_gt_feature_n_positives: 2,
     device: 'cuda:1',
     data_parallel: False,
     logging_verbosity: 2,
     metrics: {
-#        accuracy: !import src.metrics.accuracy_score,
         average_precision: !import sklearn.metrics.average_precision_score,
-        # jaccard_score: !import sklearn.metrics.jaccard_score,
-#        f1: !import src.metrics.f1_score,
-#        precision: !import src.metrics.precision_score,
-#        recall: !import src.metrics.recall_score,
-        # roc_auc: !import sklearn.metrics.roc_auc_score,
     },
     metrics_transforms: {
         average_precision: !import src.transforms.scores2prob_transform,
-
-        #r2: !import src.transforms.base_transform,
-        #featurewise_pearson: !import src.transforms.base_transform,
-        #trackwise_pearson: !import src.transforms.preds2tracks, #!obj:src.transforms.preds2tracks_transform {
-            #vector_indices_by_matrix_index: /home/jovyan/vector_indices_by_matrix_index.npy,
-        #},
-        #average_precision: !import src.transforms.quant2prob_transform,
-        #average_precision_baseline: !import src.transforms.preds2mpv_transform,
     },
     log_confusion_matrix: False,
 }
