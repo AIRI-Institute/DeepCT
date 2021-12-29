@@ -645,10 +645,10 @@ class AnalyzeSequences(object):
             region_start -= 1
             region_end -= 1
         # query a sequence of greater length once and sample from it later
-        region_sequence_start = (
-            region_start - (self.center_bin - 1) - self._start_radius
-        )
-        region_sequence_end = region_end + (self.center_bin - 1) + self._end_radius
+        start_context = self._start_radius - self.center_bin // 2
+        end_context = self._end_radius - self.center_bin // 2
+        region_sequence_start = region_start - (self.center_bin - 1) - start_context
+        region_sequence_end = region_end + (self.center_bin - 1) + end_context
         sequence = self.reference_sequence.get_encoding_from_coords(
             chrom, region_sequence_start, region_sequence_end, strand="+", pad=False
         )
@@ -674,9 +674,10 @@ class AnalyzeSequences(object):
         # compute average scores
         n_values = n_samples - (self.center_bin - 1)
         assert n_values == region_end - region_start
-        mean_preds = np.zeros((n_values, *inference_vals.shape[1:]))
+        mean_preds = []
         for i in range(n_values):
-            mean_preds[i] = inference_vals[i : i + self.center_bin].mean(axis=0)
+            mean_preds.append(inference_vals[i : i + self.center_bin].mean(axis=0))
+        mean_preds = np.stack(mean_preds)
 
         np.save(os.path.join(output_dir, "mean_region_ref_predictions.npy"), mean_preds)
 
@@ -686,7 +687,7 @@ class AnalyzeSequences(object):
         if alt_position is not None:
             if not zero_based:
                 alt_position -= 1
-            alt_idx = alt_position - region_start
+            alt_idx = alt_position - region_sequence_start
 
             alt_sequence = sequence.copy()
             alt_encoding = self.reference_sequence.sequence_to_encoding(alt_letter)
@@ -710,9 +711,10 @@ class AnalyzeSequences(object):
             inference_vals = np.concatenate(inference_vals)
 
             # compute average scores
-            mean_preds = np.zeros((n_values, *inference_vals.shape[1:]))
+            mean_preds = []
             for i in range(n_values):
-                mean_preds[i] = inference_vals[i : i + self.center_bin].mean(axis=0)
+                mean_preds.append(inference_vals[i : i + self.center_bin].mean(axis=0))
+            mean_preds = np.stack(mean_preds)
 
             np.save(
                 os.path.join(output_dir, "mean_region_alt_predictions.npy"), mean_preds
@@ -909,11 +911,17 @@ class AnalyzeSequences(object):
                 )
 
         variant_counts = variants["AUSTATUS"].value_counts()
-        n_total_cases = variant_counts["case"] - n_bad_cases
-        n_total_controls = variant_counts["control"] - n_bad_controls
+        n_total_cases = 0
+        mean_case_effect = 0
+        if "case" in variant_counts:
+            n_total_cases = variant_counts["case"] - n_bad_cases
+            mean_case_effect = case_effect_sum / n_total_cases
 
-        mean_case_effect = case_effect_sum / n_total_cases
-        mean_control_effect = control_effect_sum / n_total_controls
+        n_total_controls = 0
+        mean_control_effect = 0
+        if "control" in variant_counts:
+            n_total_controls = variant_counts["control"] - n_bad_controls
+            mean_control_effect = control_effect_sum / n_total_controls
 
         # write mean case and control effects
         np.save(
@@ -924,12 +932,15 @@ class AnalyzeSequences(object):
             mean_control_effect,
         )
 
-        case_effects = np.stack(case_effects)
-        control_effects = np.stack(control_effects)
-        np.save(os.path.join(output_dir, "all_case_ref_outputs.npy"), case_effects)
-        np.save(
-            os.path.join(output_dir, "all_control_ref_outputs.npy"), control_effects
-        )
+        if len(case_effects) > 0:
+            case_effects = np.stack(case_effects)
+            np.save(os.path.join(output_dir, "all_abs_case_effects.npy"), case_effects)
+
+        if len(control_effects) > 0:
+            control_effects = np.stack(control_effects)
+            np.save(
+                os.path.join(output_dir, "all_abs_control_effects.npy"), control_effects
+            )
 
         # run Mann-Whitney U-Test
         pvals = np.zeros(case_effects.shape[1:])
