@@ -627,6 +627,97 @@ class AnalyzeSequences(object):
         reporter.write_to_file()
         reporter.close_handlers()
 
+    def region_prediction(
+        self,
+        output_dir,
+        chrom,
+        region,
+        zero_based=False,
+        alt_position=None,
+        alt_letter=None,
+    ):
+        """
+        Save reference predictions for specified region.
+        """
+        region_start, region_end = region
+        if not zero_based:
+            # make coordinates 0-based
+            region_start -= 1
+            region_end -= 1
+        # query a sequence of greater length once and sample from it later
+        region_sequence_start = (
+            region_start - (self.center_bin - 1) - self._start_radius
+        )
+        region_sequence_end = region_end + (self.center_bin - 1) + self._end_radius
+        sequence = self.reference_sequence.get_encoding_from_coords(
+            chrom, region_sequence_start, region_sequence_end, strand="+", pad=False
+        )
+
+        # perform inference
+        n_samples = region_end - region_start + self.center_bin - 1
+        inference_vals = []
+        batch = []
+        for seq_start in tqdm(range(n_samples)):
+            seq_end = seq_start + self.sequence_length
+
+            sample = sequence[seq_start:seq_end]
+            batch.append(sample)
+            # perform inference if batch is ready
+            if len(batch) == self.batch_size or seq_start == n_samples - 1:
+                batch = np.stack(batch)
+                preds = self._predict(batch)
+                preds = preds.cpu().numpy()
+                inference_vals.append(preds)
+                batch = []
+        inference_vals = np.concatenate(inference_vals)
+
+        # compute average scores
+        n_values = n_samples - (self.center_bin - 1)
+        assert n_values == region_end - region_start
+        mean_preds = np.zeros((n_values, *inference_vals.shape[1:]))
+        for i in range(n_values):
+            mean_preds[i] = inference_vals[i : i + self.center_bin].mean(axis=0)
+
+        np.save(os.path.join(output_dir, "mean_region_ref_predictions.npy"), mean_preds)
+
+        del inference_vals
+        del mean_preds
+
+        if alt_position is not None:
+            if not zero_based:
+                alt_position -= 1
+            alt_idx = alt_position - region_start
+
+            alt_sequence = sequence.copy()
+            alt_encoding = self.reference_sequence.sequence_to_encoding(alt_letter)
+            alt_sequence[alt_idx] = alt_encoding
+
+            # perform inference
+            inference_vals = []
+            batch = []
+            for seq_start in tqdm(range(n_samples)):
+                seq_end = seq_start + self.sequence_length
+
+                sample = alt_sequence[seq_start:seq_end]
+                batch.append(sample)
+                # perform inference if batch is ready
+                if len(batch) == self.batch_size or seq_start == n_samples - 1:
+                    batch = np.stack(batch)
+                    preds = self._predict(batch)
+                    preds = preds.cpu().numpy()
+                    inference_vals.append(preds)
+                    batch = []
+            inference_vals = np.concatenate(inference_vals)
+
+            # compute average scores
+            mean_preds = np.zeros((n_values, *inference_vals.shape[1:]))
+            for i in range(n_values):
+                mean_preds[i] = inference_vals[i : i + self.center_bin].mean(axis=0)
+
+            np.save(
+                os.path.join(output_dir, "mean_region_alt_predictions.npy"), mean_preds
+            )
+
     def variant_effect_prediction(
         self,
         input_path,
