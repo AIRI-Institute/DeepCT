@@ -1,6 +1,7 @@
 """
 This module provides the `TrainModel` class and supporting methods.
 """
+import copy
 import logging
 import math
 import os
@@ -229,6 +230,10 @@ class TrainEncodeDatasetModel(object):
         )
         self.ct_masks = ct_masks
         self.dataloaders = dataloaders
+        n_epoch_steps = sum(
+            [len(train_loader) for train_loader, val_loader in self.dataloaders]
+        )
+        print(f"Total epoch steps: {n_epoch_steps}")
         self.criterion = loss_criterion
         self.optimizer = optimizer_class(self.model.parameters(), **optimizer_kwargs)
 
@@ -288,12 +293,27 @@ class TrainEncodeDatasetModel(object):
             metrics=metrics,
             metrics_transforms=metrics_transforms,
         )
+        # create separate baseline metrics object without target sigmoid transformation
+        if not self.dataloaders[0][0].dataset.quantitative_features:
+            baseline_metrics_transforms = {}
+            for m, t in metrics_transforms.items():
+                if t.__class__.__name__ == "Compose":
+                    baseline_ts = copy.copy(t)
+                    baseline_ts.transforms = [
+                        tr
+                        for tr in baseline_ts.transforms
+                        if tr.__class__.__name__ != "Quantitative2Sigmoid"
+                    ]
+                    baseline_metrics_transforms[m] = baseline_ts
+        else:
+            baseline_metrics_transforms = metrics_transforms
+
         self._baseline_validation_metrics = PerformanceMetrics(
             lambda idx: self.dataloaders[0][0].dataset.target_features[idx],
             lambda idx: self.dataloaders[0][0].dataset._cell_types[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
-            metrics_transforms=metrics_transforms,
+            metrics_transforms=baseline_metrics_transforms,
         )
         self._test_metrics = PerformanceMetrics(
             lambda idx: self.dataloaders[0][0].dataset.target_features[idx],
@@ -352,7 +372,14 @@ class TrainEncodeDatasetModel(object):
         self._train_logger.info("loss")
         self._validation_logger.info(
             "\t".join(
-                ["loss"] + sorted([x for x in self._validation_metrics.metrics.keys()])
+                ["loss"]
+                + sorted(
+                    [x for x in self._validation_metrics.metrics.keys()]
+                    + ["baseline_loss"]
+                    + sorted(
+                        [x for x in self._baseline_validation_metrics.metrics.keys()]
+                    )
+                )
             )
         )
 
@@ -391,11 +418,15 @@ class TrainEncodeDatasetModel(object):
         report_train_target_masks = []
 
         # get {dataloaders: masks} dict
-        fold_map = {}
+        self.fold_map = {}
         for i in range(len(self.dataloaders)):
-            fold_map[self.dataloaders[i]] = self.ct_masks[i]
+            self.fold_map[self.dataloaders[i]] = self.ct_masks[i]
 
-        if self.checkpoint_resume is not None:
+        if (
+            self.checkpoint_resume is not None
+            and self.checkpoint_chunk > 0
+            and self.n_epochs > 0
+        ):
 
             print(
                 f"Start training from {self.checkpoint_epoch} epoch, chunk {self.checkpoint_chunk}"
@@ -403,12 +434,11 @@ class TrainEncodeDatasetModel(object):
 
             # shuffle loaders
             random.seed(666 + self.checkpoint_epoch)
-            l = list(fold_map.items())
-            shuffled_loaders = dict(random.sample(l, len(fold_map.keys())))
+            l = list(self.fold_map.items())
             for chunk, (
                 (train_batch_loader, valid_batch_loader),
                 current_ct_mask,
-            ) in enumerate(shuffled_loaders.items()):
+            ) in enumerate(dict(random.sample(l, len(self.fold_map.keys()))).items()):
 
                 if chunk >= self.checkpoint_chunk:
                     print("epoch:", self.checkpoint_epoch, "data chunk:", chunk)
@@ -487,11 +517,11 @@ class TrainEncodeDatasetModel(object):
 
             # shuffle loaders
             random.seed(666 + epoch)
-            l = list(fold_map.items())
+            l = list(self.fold_map.items())
             for chunk, (
                 (train_batch_loader, valid_batch_loader),
                 current_ct_mask,
-            ) in enumerate(dict(random.sample(l, len(fold_map.keys()))).items()):
+            ) in enumerate(dict(random.sample(l, len(self.fold_map.keys()))).items()):
 
                 self.current_ct_mask = self.ct_indices_to_mask(current_ct_mask)
 
@@ -560,6 +590,10 @@ class TrainEncodeDatasetModel(object):
             self._log_embeddings(total_steps)
         self._writer.flush()
 
+        valid_data = []
+        for (train_batch_loader, valid_batch_loader), ct_mask in self.fold_map.items():
+            valid_data.append((valid_batch_loader, ct_mask))
+        self._final_validate(valid_data)
         return None
 
     def ct_indices_to_mask(self, ct_indices):
@@ -606,20 +640,20 @@ class TrainEncodeDatasetModel(object):
 
         if self.criterion.reduction == "sum":
             loss = loss / self.criterion.weight.sum()
-        predictions = torch.sigmoid(outputs)
+        # predictions = torch.sigmoid(outputs)
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
         if self.masked_targets:
-            target_mask = target_mask_tr.cpu().detach().numpy()
+            target_mask = target_mask_tr.cpu().detach()
         else:
             target_mask = None
 
         return (
-            predictions.cpu().detach().numpy(),
-            targets.cpu().detach().numpy(),
+            outputs.cpu().detach(),
+            targets.cpu().detach(),
             target_mask,
             loss.item(),
         )
@@ -636,7 +670,7 @@ class TrainEncodeDatasetModel(object):
 
         Returns
         -------
-        tuple(float, list(numpy.ndarray))
+        tuple(float, list(torch.tensor))
             Returns the average loss, and the list of all predictions.
 
         """
@@ -664,12 +698,23 @@ class TrainEncodeDatasetModel(object):
             target_mask_val[:, ~self.current_ct_mask, :] = False
 
             # compute a baseline
-            baseline = (targets * target_mask_tr).sum(axis=1) / target_mask_tr.sum(
-                axis=1
-            )
-            baseline = torch.repeat_interleave(
-                baseline.unsqueeze(1), self.n_cell_types, dim=1
-            )
+            if data_loader.dataset.quantitative_features:
+                baseline = torch.zeros(
+                    targets.shape[0],
+                    targets.shape[1] + 1,
+                    targets.shape[2],
+                    device=targets.device,
+                )
+                baseline[:, -1, :] += (targets * target_mask_tr).sum(
+                    axis=1
+                ) / target_mask_tr.sum(axis=1)
+            else:
+                baseline = (targets * target_mask_tr).sum(axis=1) / target_mask_tr.sum(
+                    axis=1
+                )
+                baseline = torch.repeat_interleave(
+                    baseline.unsqueeze(1), self.n_cell_types, dim=1
+                )
 
             with torch.no_grad():
                 if self.masked_targets:
@@ -682,7 +727,11 @@ class TrainEncodeDatasetModel(object):
                 if self.criterion.reduction == "sum":
                     loss = loss / self.criterion.weight.sum()
 
-                predictions = torch.sigmoid(outputs)
+                # predictions = torch.sigmoid(outputs)
+
+                # baseline_loss = self.criterion(baseline, targets)
+                # if self.criterion.reduction == "sum":
+                #    baseline_loss = baseline_loss / self.criterion.weight.sum()
 
                 if self.val_reduction_factor > 1:
                     reduced_val_batch_size = (
@@ -698,11 +747,11 @@ class TrainEncodeDatasetModel(object):
                     if self.masked_targets:
                         target_mask = target_mask[reduced_index]
 
-                all_predictions.append(predictions.data.cpu().numpy())
-                all_targets.append(targets.data.cpu().numpy())
-                all_baselines.append(baseline.data.cpu().numpy())
+                all_predictions.append(outputs.data.cpu())
+                all_targets.append(targets.data.cpu())
+                all_baselines.append(baseline.data.cpu())
                 if self.masked_targets:
-                    all_target_masks.append(target_mask.data.cpu().numpy())
+                    all_target_masks.append(target_mask.data.cpu())
                 batch_losses.append(loss.item())
 
         return (
@@ -789,6 +838,12 @@ class TrainEncodeDatasetModel(object):
             else:
                 to_log.append("NA")
 
+        if "loss" in baselines_scores:
+            self._writer.add_scalar(
+                "baseline_loss/test", baselines_scores["loss"], step
+            )
+            to_log.append(str(baselines_scores["loss"]))
+
         # log baseline metrics
         for k in sorted(self._baseline_validation_metrics.metrics.keys()):
             if k in baselines_scores and baselines_scores[k]:
@@ -843,7 +898,7 @@ class TrainEncodeDatasetModel(object):
 
         Returns
         -------
-        tuple(float, list(numpy.ndarray))
+        tuple(float, list(torch.tensor))
             Returns the average loss, and the list of all predictions.
 
         """
@@ -908,10 +963,10 @@ class TrainEncodeDatasetModel(object):
                     if self.masked_targets:
                         target_mask = target_mask[reduced_index]
 
-                all_predictions.append(predictions.data.cpu().numpy())
-                all_targets.append(targets.data.cpu().numpy())
+                all_predictions.append(predictions.data.cpu())
+                all_targets.append(targets.data.cpu())
                 if self.masked_targets:
-                    all_target_masks.append(target_mask.data.cpu().numpy())
+                    all_target_masks.append(target_mask.data.cpu())
 
                 batch_losses.append(loss.item())
 
@@ -1055,3 +1110,87 @@ class TrainEncodeDatasetModel(object):
         self._writer.add_embedding(
             embeddings, metadata=cell_type_labels, global_step=step
         )
+
+    def _final_validate(self, val_data):
+        """
+        Makes predictions for all validation data and saves it as a final score
+
+        Parameters
+        ----------
+        val_data : list(tuple(torch.utils.data.DataLoader, numpy.array))
+            A list of tuples of validation dataloaders and their corresponding
+            cell type masks.
+
+        Returns
+        -------
+        None
+            Writes validation scores using `self._writer` and `logger`.
+
+        """
+        all_results = None
+        target_cnt = [0 for i in range(len(val_data))]
+
+        for i, (val_loader, ct_mask) in enumerate(val_data):
+            self.current_ct_mask = ct_mask
+            for batch in val_loader:
+                target_cnt[i] = target_cnt[i] + batch[2].sum(axis=0)
+            loader_results = self._evaluate_on_ct(val_loader)
+
+            if all_results is None:
+                all_results = [[] for i in range(len(loader_results))]
+
+            for loader_res, all_res in zip(loader_results, all_results):
+                if isinstance(loader_res, list):
+                    all_res.extend(loader_res)
+                else:
+                    all_res.append(loader_res)
+            del loader_results
+        target_cnt = torch.stack(target_cnt)
+        # import pdb; pdb.set_trace()
+        (
+            all_losses,
+            all_predictions,
+            all_targets,
+            all_baselines,
+            all_target_masks,
+        ) = all_results
+
+        valid_scores = self._compute_metrics(
+            all_predictions, all_targets, all_target_masks, log_prefix="validation"
+        )
+        baselines_scores = self._compute_baseline_score(
+            all_baselines, all_targets, all_target_masks, log_prefix="validation"
+        )
+        valid_scores["loss"] = sum(all_losses) / len(all_losses)
+
+        validation_loss = valid_scores["loss"]
+        self._writer.add_scalar("loss/final_val", validation_loss)
+        to_log = [str(validation_loss)]
+
+        # log model metrics
+        for k in sorted(self._validation_metrics.metrics.keys()):
+            if k in valid_scores and valid_scores[k]:
+                to_log.append(str(valid_scores[k]))
+                self._writer.add_scalar(f"model_{k}/final_val", valid_scores[k])
+            else:
+                to_log.append("NA")
+
+        # log baseline metrics
+        for k in sorted(self._baseline_validation_metrics.metrics.keys()):
+            if k in baselines_scores and baselines_scores[k]:
+                to_log.append(str(baselines_scores[k]))
+                self._writer.add_scalar(f"baseline_{k}/final_val", baselines_scores[k])
+            else:
+                to_log.append("NA")
+
+        self._validation_logger.info("\t".join(to_log))
+
+        logger.info("validation loss: {0}".format(validation_loss))
+
+        if self.save_track_metrics_during_training:
+            self._validation_metrics.write_feature_scores_to_file(
+                os.path.join(self.output_dir, "final_val_metrics.txt")
+            )
+            self._baseline_validation_metrics.write_feature_scores_to_file(
+                os.path.join(self.output_dir, "final_val_baseline_metrics.txt")
+            )
