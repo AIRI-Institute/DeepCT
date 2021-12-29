@@ -33,8 +33,6 @@ dataset: {
     seq_fold_ids: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/split_intervals_no_overlap_k10.npy,
     train_sampler_class: LargeRandomSampler,
     train_sampler_args: {replacement: False},
-    #validation_sampler_class: SubsetRandomSampler,
-    #validation_sampler_args: {num_samples: 1000000},
 
     distinct_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/distinct_features_treatment.txt,
     target_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/target_features.txt,
@@ -52,11 +50,11 @@ dataset: {
         feature_thresholds: None,
         position_skip: 200,
         n_folds: 10,                    
-        fold: 0,                        # !!!
+        fold: 0,
         quantitative_features: True,
     },
     loader_args: {
-        batch_size: 64,  # !!!
+        batch_size: 64,
         num_workers: 16,
         pin_memory: True,
     },
@@ -89,7 +87,7 @@ dataset: {
     }
 }
 train_model: !obj:src.train.ct_masked_train.TrainEncodeDatasetModel {
-    n_epochs: 30,  # !!!
+    n_epochs: 30,
     report_stats_every_n_steps: 2000,
     save_track_metrics_during_training: True,
     save_checkpoint_every_n_steps: 2000,
