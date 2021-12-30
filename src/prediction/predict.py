@@ -637,7 +637,31 @@ class AnalyzeSequences(object):
         alt_letter=None,
     ):
         """
-        Save reference predictions for specified region.
+        Save reference predictions for specified region and predictions for the same
+        region with a specified variant.
+
+        Parameters
+        ----------
+        output_dir : str
+            Output directory to write the model predictions.
+        chrom : str
+            Region chromosome.
+        region : list(int)
+            Region start (inclusive) and end (exclusive) positions.
+        zero_based : bool
+            Default is `False`. Whether provided genome positions are zero-based.
+        alt_position : int
+            Default is `None`. If not `None`, position within the specified region
+            where the variant occurs to calculate predictions of sequence with
+            the specified variant.
+        alt_letter : str
+            Default is `None`. If not `None`, variant to substitute reference in
+            `alt_position` position.
+
+        Returns
+        -------
+        None
+            Writes the output to file(s) in `output_dir`.
         """
         region_start, region_end = region
         if not zero_based:
