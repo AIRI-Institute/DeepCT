@@ -5,39 +5,38 @@ This code is provided under [CC BY-NC-SA 4.0 license](https://creativecommons.or
 
 ## How to run:
 
-1. Clone and checkout upgraded `selene`:
+1. Install requirements
 ```zsh
-cd ~
-git clone https://github.com/sberbank-ai-lab/selene.git
-cd selene
-git checkout arlapin/dev
+pip install -r requirements.txt
 ```
-2. Install `selene` as per [official instruction](https://github.com/FunctionLab/selene/blob/master/README.md#installing-selene-from-source)
+If you run into any problems with installation of `selene`, you can also consult `selene`'s [official instruction](https://github.com/FunctionLab/selene/blob/master/README.md#installing-selene-from-source)
 
-3. Add `selene` to your `$PYTHONPATH`:
+2. Run scripts specified by config files, e.g.:
 ```zsh
-$PYTHONPATH=$PYTHONPATH:/home/$USER/selene
+python -m selene_sdk model_configs/config_file.yml
 ```
 
-4. Clone this repo
+## Data 
 
-5. Run DeepCT according to config file:
-```zsh
-cd ~/DeepCT
-python -u ~/selene/selene_sdk/cli.py model_configs/biox_all_multi_ct_train.yml
-```
+There are several scripts to download and process the data.
+* `data/download_boix_et_al_data.sh` to download raw `*.bigWig` files
+* `data/process_boix_et_al_data.py` to preprocess the `*.bigWig` files
+* `data/annotate_biox_data.py` to produce `selene`-style `.bed` file containing intervals of present track peaks.
+* `data/generate_target_files.py` to produce dataset files to specify in configuration files to run training (see `data/README.md` for more info).
 
+## Training the models
 
-## How to evaluate:
+1. Make sure you have prepared your data.
+2. Run training using your configuration file, for example `model_configs/train_example.yml`.
 
-### DeeperDeepSEA (trained on DNase-only)
-```zsh
-CUDA_VISIBLE_DEVICES=0,1,2,3 python -u ~/selene/selene_sdk/cli.py model_configs/deeper_deep_sea_benchmark.yml
-```
+Config files for benchmarks mentioned in the paper:
+* cell type specificity: `model_configs/boix_train_masked_ct.yml` (classification) and `boix_qDeepCT_train_masked_ct.yml` (regression);
+* sequence specificity: `model_configs/boix_all_multi_ct_train.yml` (classification) and `model_configs/boix_allNonTreated_highqual_multi_ct_qDeepCT_train_2021-11-15-03-30-59.yml` (regression)
+* masked tracks prediction: `model_configs/boix_allNonTreated_highqual_masked_multi_ct_qDeepCT_train.yml`
 
-### DeepCT
-1. Update [model_configs/biox_all_multi_ct_eval.yml](model_configs/biox_all_multi_ct_eval.yml) with model's path and config;
-2. Run
-```zsh
-python -u ~/selene/selene_sdk/cli.py model_configs/biox_all_multi_ct_eval.yml
-```
+## Inference
+
+1. Prepare pre-trained model and input files.
+2. Run inference using your configuration file, for example `model_configs/inference_example.yml`.
+
+Config file for variant effect predictions mentioned in the paper: `model_configs/boix_all_multi_ct_predict.yml`

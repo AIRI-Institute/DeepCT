@@ -35,7 +35,12 @@ dataset: {
 
     dataset_args: {
         reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
-        target_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/sorted_data.bed.gz,
+        target_class: !import selene_sdk.targets.GenomicFeatures,
+        target_init_kwargs: {
+            input_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/sorted_data.bed.gz,
+            feature_thresholds: 0.5,
+        },
+        target_path: None,
         cell_wise: True,
         multi_ct_target: True,
         sequence_length: 1000,
@@ -65,16 +70,7 @@ train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
     data_parallel: False,
     logging_verbosity: 2,
     metrics: {
-#        accuracy: !import src.metrics.accuracy_score,
         average_precision: !import sklearn.metrics.average_precision_score,
-#        f1: !import src.metrics.f1_score,
-#        precision: !import src.metrics.precision_score,
-#        recall: !import src.metrics.recall_score,
-#        roc_auc: !import sklearn.metrics.roc_auc_score,
-#        jaccard@3: !obj:src.metrics.threshold_wrapper {
-#            score_func: !import src.metrics.jaccard_score,
-#            threshold: 0.3,
-#        },
     },
 }
 output_dir: DeepCT_outputs/boix/ct_v2/all/multi_ct/AdamW_COS_LR0001
