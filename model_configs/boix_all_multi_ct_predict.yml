@@ -43,5 +43,13 @@ variant_effect_prediction: {
     fdr: 0.1,
 }
 
+region_prediction: {
+    output_dir: /home/msindeeva/DeepCT/predictions/,
+    chrom: 'chr17',
+    region: [2112813, 2122813],
+    alt_position: 2117813,
+    alt_letter: 'G',
+}
+
 random_seed: 1447
 ...
