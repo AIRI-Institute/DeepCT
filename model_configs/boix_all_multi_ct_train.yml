@@ -27,20 +27,16 @@ dataset: {
     class: EncodeDataset,
     sampler_class: LargeRandomSampler,
 
-    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/distinct_features.txt,
-    target_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/target_features.txt,
-    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/target_intervals.bed,
+    distinct_features_path: dataset_data/distinct_features.txt,
+    target_features_path: dataset_data/target_features.txt,
+    sampling_intervals_path: dataset_data/target_intervals.bed,
     test_holdout: [chr8, chr9],
     validation_holdout: [chr6, chr7],
 
     dataset_args: {
-        reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
+        reference_sequence_path: dataset_data/male.hg19.fasta,
         target_class: !import selene_sdk.targets.GenomicFeatures,
-        target_init_kwargs: {
-            input_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/sorted_data.bed.gz,
-            feature_thresholds: 0.5,
-        },
-        target_path: None,
+        target_path: dataset_data/sorted_data.bed.gz,
         cell_wise: True,
         multi_ct_target: True,
         sequence_length: 1000,

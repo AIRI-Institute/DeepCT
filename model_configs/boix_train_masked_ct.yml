@@ -27,24 +27,24 @@ criterion: !obj:torch.nn.BCEWithLogitsLoss {
 }
 dataset: {
     debug: False,
-    path: /home/msindeeva/DeepCT/src/dataset.py,
+    path: src/dataset.py,
     class: EncodeDataset,
-    ct_fold_ids: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/cell_types_random_ids_k10.npy,
-    seq_fold_ids: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/split_intervals_no_overlap_k10.npy,
+    ct_fold_ids: dataset_data/maximal_clique_with0/cell_types_random_ids_k10.npy,
+    seq_fold_ids: dataset_data/maximal_clique_with0/split_intervals_no_overlap_k10.npy,
     train_sampler_class: LargeRandomSampler,
     train_sampler_args: {replacement: False},
 
-    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/distinct_features.txt,
-    target_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/target_features.txt,
-    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/target_intervals.bed,
+    distinct_features_path: dataset_data/maximal_clique_with0/distinct_features.txt,
+    target_features_path: /dataset_data/maximal_clique_with0/target_features.txt,
+    sampling_intervals_path: dataset_data/maximal_clique_with0/target_intervals.bed,
     test_holdout: [chr8, chr9],
     validation_holdout: [chr6, chr7],
 
     dataset_args: {
-        reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
+        reference_sequence_path: dataset_data/male.hg19.fasta,
         target_class: !import selene_sdk.targets.GenomicFeatures,
         target_init_kwargs: {
-            input_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/sorted_data.bed.gz,
+            input_path: dataset_data/maximal_clique_with0/sorted_data.bed.gz,
             feature_thresholds: 0.5,
         },
         target_path: None,
@@ -86,7 +86,7 @@ train_model: !obj:src.train.ct_masked_train.TrainMaskedCTModel {
     },
     log_confusion_matrix: False,
 }
-output_dir: DeepCT_outputs/boix/ct_v2/complete_clique1_with0_fix/kfold_10folds_LR0001/no_overlap/
+output_dir: DeepCT_outputs/boix/ct_v2/maximal_clique_with0/kfold_10folds_LR0001/no_overlap/
 
 random_seed: 1447
 create_subdirectory: True

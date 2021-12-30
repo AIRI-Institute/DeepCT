@@ -29,10 +29,10 @@ There are several scripts to download and process the data.
 1. Make sure you have prepared your data.
 2. Run training using your configuration file, for example `model_configs/train_example.yml`.
 
-Config files for benchmarks mentioned in the paper:
-* cell type specificity: `model_configs/boix_train_masked_ct.yml` (classification) and `boix_qDeepCT_train_masked_ct.yml` (regression);
-* sequence specificity: `model_configs/boix_all_multi_ct_train.yml` (classification) and `model_configs/boix_allNonTreated_highqual_multi_ct_qDeepCT_train_2021-11-15-03-30-59.yml` (regression)
-* masked tracks prediction: `model_configs/boix_allNonTreated_highqual_masked_multi_ct_qDeepCT_train.yml`
+Config files for benchmarks mentioned in the paper (most configs assume necessary data files have already been generated and placed into a folder `dataset_data`):
+* cell type specificity: `model_configs/boix_train_masked_ct.yml` (classification) and `boix_qDeepCT_train_masked_ct.yml` (regression). Assumes all necessary data files for tracks forming a maximal clique have already been generated and placed into a folder `dataset_data/maximal_clique_with0`;
+* sequence specificity: `model_configs/boix_all_multi_ct_train.yml` (classification) and `model_configs/boix_allNonTreated_highqual_multi_ct_qDeepCT_train_2021-11-15-03-30-59.yml` (regression);
+* masked tracks prediction: `model_configs/boix_allNonTreated_highqual_masked_multi_ct_qDeepCT_train.yml`.
 
 ## Inference
 

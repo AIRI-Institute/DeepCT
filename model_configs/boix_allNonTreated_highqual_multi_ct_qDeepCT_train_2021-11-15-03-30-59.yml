@@ -28,16 +28,15 @@ dataset: {
     validation_sampler_class: SubsetRandomSampler,
     validation_sampler_args: {num_samples: 32000},
 
-    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/q_features_all/distinct_features_nonTreated.qcfiltered.txt,
-    target_features_path: /mnt/datasets/DeepCT/dataset_data/q_features_all/target_features.txt,
-    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/q_features_all/target_intervals_wo_chrY.bed,
+    distinct_features_path: dataset_data/distinct_features_nonTreated.qcfiltered.txt,
+    target_features_path: dataset_data/target_features.txt,
+    sampling_intervals_path: dataset_data/target_intervals_wo_chrY.bed,
     test_holdout: [chr8, chr9],
     validation_holdout: [chr6, chr7],
 
     dataset_args: {
-        reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
-        target_path: /mnt/datasets/DeepCT/dataset_data/q_features_all/features2files_mapping.with_tmpfs.txt,
-        #target_path: /mnt/datasets/DeepCT/dataset_data/q_features_all/features2files_mapping.txt,
+        reference_sequence_path: dataset_data/male.hg19.fasta,
+        target_path: dataset_data/features2files_mapping.txt,
         cell_wise: True,
         multi_ct_target: True,
         sequence_length: 1000,
@@ -113,7 +112,6 @@ batch_merging_transform: &batch_merging_transform !obj:torchvision.transforms.Co
 }
 
 train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
-    checkpoint_resume: /disk2/vsfishman/DeepCT/DeepCT_outputs/final/40_features_q_mpi_highQCsamples/2021-11-15-03-30-59/checkpoint.pth.tar,
     n_epochs: 20,
     report_stats_every_n_steps: 2000,
     save_track_metrics_during_training: True,
@@ -136,7 +134,7 @@ train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
 }
 
 criterion: !obj:src.criterion.WeightedMSELossWithMPI {alpha: 0.0002}
-output_dir: /disk2/vsfishman/DeepCT/DeepCT_outputs/final/40_features_q_mpi_highQCsamples/
+output_dir: DeepCT_outputs/final/40_features_q_mpi_highQCsamples/
 
 random_seed: 1447
 create_subdirectory: False

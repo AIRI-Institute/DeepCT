@@ -29,20 +29,20 @@ dataset: {
     debug: False,
     path: /home/msindeeva/DeepCT/src/dataset.py,
     class: EncodeDataset,
-    ct_fold_ids: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/cell_types_random_ids_k10.npy,
-    seq_fold_ids: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/split_intervals_no_overlap_k10.npy,
+    ct_fold_ids: dataset_data/maximal_clique_with0/cell_types_random_ids_k10.npy,
+    seq_fold_ids: dataset_data/maximal_clique_with0/split_intervals_no_overlap_k10.npy,
     train_sampler_class: LargeRandomSampler,
     train_sampler_args: {replacement: False},
 
-    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/distinct_features_treatment.txt,
-    target_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/target_features.txt,
-    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/target_intervals.bed,
+    distinct_features_path: dataset_data/maximal_clique_with0/distinct_features_treatment.txt,
+    target_features_path: dataset_data/maximal_clique_with0/target_features.txt,
+    sampling_intervals_path: dataset_data/maximal_clique_with0/target_intervals.bed,
     test_holdout: [chr8, chr9],
     validation_holdout: [chr6, chr7],
 
     dataset_args: {
-        reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
-        target_path: /mnt/datasets/DeepCT/dataset_data/q_features_all/features2files_mapping.txt,
+        reference_sequence_path: dataset_data/male.hg19.fasta,
+        target_path: dataset_data/features2files_mapping.txt,
         cell_wise: True,
         multi_ct_target: True,
         sequence_length: 1000,
@@ -88,9 +88,7 @@ dataset: {
 }
 train_model: !obj:src.train.ct_masked_train.TrainEncodeDatasetModel {
     n_epochs: 30,
-    report_stats_every_n_steps: 2000,
     save_track_metrics_during_training: True,
-    save_checkpoint_every_n_steps: 2000,
     report_gt_feature_n_positives: 2,
     device: 'cuda:0',
     data_parallel: False,
@@ -105,7 +103,7 @@ train_model: !obj:src.train.ct_masked_train.TrainEncodeDatasetModel {
     },
     log_confusion_matrix: False,
 }
-output_dir: DeepCT_outputs/boix/qDeepCT_mpi/complete_clique1_with0/kfold_10folds_LR0001/no_overlap
+output_dir: DeepCT_outputs/boix/qDeepCT_mpi/maximal_clique_with0/kfold_10folds_LR0001/no_overlap
 
 random_seed: 1447
 create_subdirectory: True
