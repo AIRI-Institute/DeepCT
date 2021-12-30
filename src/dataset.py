@@ -109,6 +109,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         intervals,
         quantitative_features=False,
         cell_wise=True,
+        samples_mode=False,
         transform=PermuteSequenceChannels(),
         sequence_length=1000,
         center_bin_to_predict=200,
@@ -116,6 +117,8 @@ class EncodeDataset(torch.utils.data.Dataset):
         strand="+",
         multi_ct_target=False,
         position_skip=1,
+        target_class=GenomicFeatures,
+        target_init_kwargs={},
     ):
         self.reference_sequence_path = reference_sequence_path
         self.reference_sequence = self._construct_ref_genome()
@@ -137,7 +140,14 @@ class EncodeDataset(torch.utils.data.Dataset):
                 print(
                     "Feature thresholds are not implemented for quantitative_features and will be ignored"
                 )
-        self.target = self._construct_target(quantitative_features)
+        else:
+            self.target_class = target_class
+            if target_init_kwargs == {}:
+                target_init_kwargs["input_path"] = target_path
+                target_init_kwargs["feature_thresholds"] = feature_thresholds
+            target_init_kwargs["features"] = self.distinct_features
+            self.target_init_kwargs = target_init_kwargs
+        self.target = self._construct_target()
 
         if not cell_wise and multi_ct_target:
             raise ValueError("cell_wise=True must be used with multi_ct_target=True")
@@ -195,13 +205,17 @@ class EncodeDataset(torch.utils.data.Dataset):
 
         self.position_skip = position_skip
 
-        self.intervals = intervals
-        self.intervals_length_sums = [0]
-        for chrom, pos_start, pos_end in self.intervals:
-            interval_length = (pos_end - pos_start) // self.position_skip + 1
-            self.intervals_length_sums.append(
-                self.intervals_length_sums[-1] + interval_length
-            )
+        self.samples_mode = samples_mode
+        if self.samples_mode:
+            self.samples = intervals
+        else:
+            self.intervals = intervals
+            self.intervals_length_sums = [0]
+            for chrom, pos_start, pos_end in self.intervals:
+                interval_length = (pos_end - pos_start) // self.position_skip + 1
+                self.intervals_length_sums.append(
+                    self.intervals_length_sums[-1] + interval_length
+                )
         if self.cell_wise:
             if self.multi_ct_target:
                 self.target_size = self.target_mask.size
@@ -211,13 +225,21 @@ class EncodeDataset(torch.utils.data.Dataset):
             self.target_size = len(self.distinct_features)
 
     def __len__(self):
+        if self.samples_mode:
+            n_sequences = len(self.samples)
+        else:
+            n_sequences = self.intervals_length_sums[-1]
         if not self.cell_wise or self.multi_ct_target:
-            return self.intervals_length_sums[-1]
-        return self.n_cell_types * self.intervals_length_sums[-1]
+            return n_sequences
+        return self.n_cell_types * n_sequences
 
     def __getitem__(self, idx):
-        chrom, pos, cell_type_idx = self._get_chrom_pos_cell_by_idx(idx)
-        retrieved_sample = self._retrieve(chrom, pos, cell_type_idx)
+        if self.samples_mode:
+            sample_idx, cell_type_idx = self._get_sample_cell_by_idx(idx)
+            retrieved_sample = self._retrieve_sample_by_idx(sample_idx, cell_type_idx)
+        else:
+            chrom, pos, cell_type_idx = self._get_chrom_pos_cell_by_idx(idx)
+            retrieved_sample = self._retrieve(chrom, pos, cell_type_idx)
         if self.transform is not None:
             retrieved_sample = self.transform(retrieved_sample)
         if self.cell_wise:
@@ -225,6 +247,32 @@ class EncodeDataset(torch.utils.data.Dataset):
         retrieved_seq = retrieved_sample[0]
         retrieved_target = retrieved_sample[2]
         return retrieved_seq, retrieved_target
+
+    def _get_sample_cell_by_idx(self, idx):
+        if self.cell_wise and not self.multi_ct_target:
+            cell_type_idx = idx % self.n_cell_types
+            sample_idx = idx // self.n_cell_types
+        else:
+            cell_type_idx = 0
+            sample_idx = idx
+        return sample_idx, cell_type_idx
+
+    def _retrieve_sample_by_idx(self, sample_idx, cell_type_idx):
+        chrom, start, end, chrom_sample_idx = self.samples[sample_idx]
+        context = self.sequence_length - (end - start)
+        if context != 0:
+            start -= context // 2
+            end += context // 2 + context % 2
+        track_vector = self.target.get_feature_data(chrom, chrom_sample_idx)
+        target, target_mask, cell_type = self._track_vector_to_target(
+            track_vector, cell_type_idx
+        )
+
+        retrieved_seq = self.reference_sequence.get_encoding_from_coords(
+            chrom, start, end, self.strand
+        )
+
+        return retrieved_seq, cell_type, target, target_mask
 
     def _get_chrom_pos_cell_by_idx(self, idx):
         """
@@ -366,8 +414,8 @@ class EncodeDataset(torch.utils.data.Dataset):
     def _construct_ref_genome(self):
         return Genome(self.reference_sequence_path)
 
-    def _construct_target(self, quantitative_features):
-        if quantitative_features:
+    def _construct_target(self):
+        if self.quantitative_features:
             feature_path = dict(
                 [line.strip().split("\t") for line in open(self.target_path)]
             )
@@ -375,11 +423,7 @@ class EncodeDataset(torch.utils.data.Dataset):
 
             return qGenomicFeatures(self.distinct_features, feature_path)
         else:
-            return GenomicFeatures(
-                self.target_path,
-                self.distinct_features,
-                feature_thresholds=self.feature_thresholds,
-            )
+            return self.target_class(**self.target_init_kwargs)
 
     def _parse_distinct_feature(self, distinct_feature):
         """
@@ -547,4 +591,4 @@ def encode_worker_init_fn(worker_id):
     # and similarly for targets (as they use bigWig file handlers)
     # which are not multiprocessing-safe, see
     # see https://github.com/deeptools/pyBigWig/issues/74#issuecomment-439520821
-    dataset.target = dataset._construct_target(dataset.quantitative_features)
+    dataset.target = dataset._construct_target()
