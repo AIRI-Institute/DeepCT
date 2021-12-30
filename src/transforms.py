@@ -2,6 +2,7 @@ from itertools import starmap
 
 import numpy as np
 import torch
+import torchvision
 
 
 class PermuteSequenceChannels(torch.nn.Module):
@@ -390,3 +391,65 @@ class Concat_batches(ArrayTransform):
             items = tuple(map(lambda y: y.cpu().detach().numpy(), items))
         result = np.concatenate(items)
         return result
+
+
+# Define a few useful transforms
+QUANTITAVE_PREDICTION_THRESHOLD = 1.4816
+
+base_transform = Concat_batches(
+    transform_predictions=True,
+    transform_targets=True,
+    transform_masks=True,
+)
+
+scores2prob_transform = torchvision.transforms.Compose(
+    [
+        Quantitative2Sigmoid(
+            transform_predictions=True,
+            transform_targets=False,
+            threshold=0.0,
+        ),  # apply sigmoid to output scores
+        base_transform,
+    ]
+)
+
+quant2prob_transform = torchvision.transforms.Compose(
+    [
+        Quantitative2Sigmoid(
+            transform_predictions=True,
+            transform_targets=False,
+            threshold=QUANTITAVE_PREDICTION_THRESHOLD,
+        ),  # transform predictions
+        Quantitative2Qualitative(
+            transform_predictions=False,
+            transform_targets=True,
+            threshold=QUANTITAVE_PREDICTION_THRESHOLD,
+        ),  # transform targets
+        base_transform,
+    ]
+)
+
+meandev2prob = torchvision.transforms.Compose(
+    [
+        MeanAndDeviation2AbsolutePrediction(
+            transform_predictions=True, transform_targets=False
+        ),
+        quant2prob_transform,
+    ]
+)
+
+meandev2val = torchvision.transforms.Compose(
+    [
+        MeanAndDeviation2AbsolutePrediction(
+            transform_predictions=True, transform_targets=False
+        ),
+        base_transform,
+    ]
+)
+
+preds2mpv_transform = torchvision.transforms.Compose(
+    [
+        MeanAverageValueBasedPredictor(),
+        quant2prob_transform,
+    ]
+)

@@ -1,5 +1,8 @@
 # DeepCT
 
+### Disclaimer:
+This code is provided under [CC BY-NC-SA 4.0 license](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.txt)
+
 ## How to run:
 
 1. Clone and checkout upgraded `selene`:
