@@ -1,7 +1,7 @@
 # DeepCT
 
 ### Disclaimer:
-This code is provided under [CC BY-NC-SA 4.0 license](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.txt)
+This code is provided under [AIRI License BY-NC-SA v.1](AIRI_BY-NC-SA_License_v.1_en.docx)
 
 ## How to run:
 
