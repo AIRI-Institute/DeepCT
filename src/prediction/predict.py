@@ -32,9 +32,8 @@ from selene_sdk.predict._common import (
 # from .predict_handlers import AbsDiffScoreHandler
 # from .predict_handlers import DiffScoreHandler
 # from .predict_handlers import LogitScoreHandler
-from selene_sdk.predict.predict_handlers import (  # , WritePredictionsHandler_
+from selene_sdk.predict.predict_handlers import (  # , WritePredictionsHandler_; WritePredictionsMultiCtBigWigHandler,
     WritePredictionsHandler,
-    WritePredictionsMultiCtBigWigHandler,
 )
 from selene_sdk.utils import initialize_logger, load_model_from_state_dict
 from statsmodels.stats.multitest import multipletests
@@ -744,6 +743,139 @@ class AnalyzeSequences(object):
                 os.path.join(output_dir, "mean_region_alt_predictions.npy"), mean_preds
             )
 
+    def annotate_tsv_with_predictions(
+        self,
+        input_path,
+        output_dir,
+        feature_selection_files_path = None
+    ):
+        """
+        Get model score predictions for variants specified in a TSV file.
+        Returns two sets of scores for sequences containing a reference allele and
+        a alternative allele. Final scores are averaged model outputs for
+        `self.center_bin` sequences containing the specified allele in different locations
+        of the sequence.
+        Note: This procedure will ignore `self.batch_size` in favor of gathering
+        `self.center_bin` sequences into a batch.
+
+        Parameters
+        ----------
+        input_path : str
+            Input path to the VCF file.
+        output_dir : str
+            Output directory to write the model predictions.
+        feature_selection_files_path : str or Nnne
+            if provided, should be a path of folder containing .npy arrays 
+            with cell_type and feature ids (ct_ids.npy and feature_ids.npy). 
+            Only exp(difference between ref and alt allele) tracks for features 
+            with these ids will be saved
+
+        Returns
+        -------
+        None
+            Writes the output to file(s) in `output_dir`. Filename will
+            match that specified in the filepath.
+
+        """
+        output_dir = os.path.join(
+            output_dir, os.path.splitext(os.path.basename(input_path))[0]
+        )
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        np.save(
+            os.path.join(output_dir, "measured_tracks_mask.npy"),
+            self._feature_indices_by_cell_type_index.T,
+        )
+        
+        if feature_selection_files_path is not None:
+            print (f"Using only subset of reported features according to the files in {feature_selection_files_path}")
+            ct_ids = np.load(os.path.join(feature_selection_files_path, "ct_ids.npy"))
+            feature_ids = np.load(os.path.join(feature_selection_files_path, "feature_ids.npy"))
+
+        variants = pd.read_csv(input_path, sep="\t", header=None)
+        variants.rename(columns={0:"CHROM",1:"POS",2:"REF",3:"ALT"
+            }, inplace=True)
+
+        # set up for mean effect prediction calculations
+        concatenated_predictions = []
+
+        for _, variant in tqdm(variants.iterrows()):
+                pos = int(variant["POS"]) - 1
+                chrom = variant["CHROM"]
+                ref = variant["REF"]
+                alt = variant["ALT"]
+
+                if ref not in self.reference_sequence.BASES_ARR:
+                    raise ValueError(
+                        f"Ref allele from VCF is not one of "
+                        f"{self.reference_sequence.BASES_ARR}"
+                    )
+
+                # query a sequence of length 1200 to cut into batch samples later
+                batch_start = pos - self.center_bin // 2 - self._start_radius + 1
+                batch_end = pos + self.center_bin // 2 + self._end_radius
+                batch_sequence = self.reference_sequence.get_encoding_from_coords(
+                    chrom, batch_start, batch_end, strand="+", pad=False
+                )
+                variant_idx = pos - batch_start
+
+                # compare retrieved sequence encoding with expected ref encoding
+                seq_ref_letter = self.reference_sequence.INDEX_TO_BASE[
+                    np.where(batch_sequence[variant_idx] == 1)[0][0]
+                ]
+                if seq_ref_letter != ref:
+                    raise ValueError(
+                        f"Expected ref allele {ref} from VCF, retrieved "
+                        f"{seq_ref_letter} from fasta in {chrom} position {pos}."
+                    )
+
+                # create batch
+                batch = []
+                for seq_start in range(self.center_bin):
+                    seq_end = seq_start + self.sequence_length
+                    sample = batch_sequence[seq_start:seq_end]
+                    batch.append(sample)
+                batch = np.stack(batch)
+
+                # get scores for reference sequences
+                preds = self._predict(batch)
+                preds = preds.cpu().numpy()
+                mean_preds = preds.mean(axis=0)
+
+                # get scores for sequences with variant
+                if ref != alt:
+                    batch_alt_sequence = batch_sequence.copy()
+                    alt_encoding = self.reference_sequence.sequence_to_encoding(alt)
+                    batch_alt_sequence[variant_idx] = alt_encoding
+
+                    # create batch
+                    batch = []
+                    for seq_start in range(self.center_bin):
+                        seq_end = seq_start + self.sequence_length
+
+                        sample = batch_alt_sequence[seq_start:seq_end]
+                        batch.append(sample)
+                    batch = np.stack(batch)
+
+                    alt_preds = self._predict(batch)
+                    alt_preds = alt_preds.cpu().numpy()
+                    mean_alt_preds = alt_preds.mean(axis=0)
+                else:
+                    raise ValueError(
+                        f"Ref allele ({ref}) cannot be the same as alt"
+                        f" ({alt}) in {chrom} position {pos}."
+                    )
+        # concatenated_flat_predictions.append(np.concatenate((mean_preds,mean_alt_preds),axis=None)
+        #                                      )
+                if feature_selection_files_path is not None:
+                    difference = (np.exp(mean_preds) - np.exp(mean_alt_preds))[ct_ids,feature_ids]
+                    concatenated_predictions.append(difference)
+                else:
+                    concatenated_predictions.append([mean_preds,mean_alt_preds])
+
+        np.save(os.path.join(output_dir, "concatenated_flat_predictions.npy"), 
+                concatenated_predictions)
+
     def variant_effect_prediction(
         self,
         input_path,
@@ -979,7 +1111,6 @@ class AnalyzeSequences(object):
         # get corrected pvals via Benjamini-Hochberg procedure
         bh_pvals, fdr_pval_cutoff = bh(pvals.flatten(), fdr=fdr)
         bh_pvals = bh_pvals.reshape(pvals.shape)
-
         np.save(os.path.join(output_dir, "mwu_abs_bh_corrected_pvals.npy"), bh_pvals)
         np.save(
             os.path.join(output_dir, f"mwu_abs_bh_fdr{fdr}_cutoff.npy"), fdr_pval_cutoff
