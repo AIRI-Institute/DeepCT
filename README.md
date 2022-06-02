@@ -1,7 +1,14 @@
 # DeepCT
 
-### Disclaimer:
-This code is provided under [Apache License, Version 2.0](https://opensource.org/licenses/Apache-2.0)
+_DeepCT_ can learn complex interconnections of epigenetic features 
+and infer unmeasured data from any available input. Furthermore, 
+it can learn cell type-specific properties, 
+build biologically meaningful vector representations of cell types, 
+and utilize these representations to generate cell type-specific predictions 
+of the effects of non-coding variations in the human genome.
+
+Our preprint: Sindeeva et al.
+[Cell type-specific interpretation of noncoding variants using deep learning-based methods](https://doi.org/10.1101/2021.12.31.474623).
 
 ## How to run:
 
@@ -41,4 +48,15 @@ Config files for benchmarks mentioned in the paper (most configs assume necessar
 1. Prepare pre-trained model and input files.
 2. Run inference using your configuration file, for example `model_configs/inference_example.yml`.
 
+Alternatively, you might want to use [our helper pipeline](https://github.com/AIRI-Institute/DeepCT-inference-helper). 
+It comes with the trained model and scripts to yield simple outputs that can be used to annotate VCFs.
+
 Config file for variant effect predictions mentioned in the paper: `model_configs/boix_all_multi_ct_predict.yml`
+
+## Copyright
+
+Provided under Apache License 2.0.
+
+© 2022 Autonomous Non-Profit Organization
+"Artificial Intelligence Research Institute" (AIRI).
+All rights reserved.
