@@ -285,13 +285,13 @@ class TrainEncodeDatasetModel(object):
             try: # transform might be an object with method set_masks
                 transform.set_masks(self.train_loader.dataset)
             except AttributeError:
-                try:
-                    for tr in transform.transforms:
+                for tr in transform.transforms:
+                    try:
                         tr.set_masks(self.train_loader.dataset)
                         logger.info("Info: masks set for transform "+\
                                             str(tr))
-                except AttributeError:
-                    pass
+                    except AttributeError:
+                        pass
                         
         self._validation_metrics = PerformanceMetrics(
             lambda idx: self.train_loader.dataset.target_features[idx],
