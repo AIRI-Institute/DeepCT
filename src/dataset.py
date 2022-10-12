@@ -159,15 +159,8 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.transform = transform
 
         self.sequence_length = sequence_length
-        self.center_bin_to_predict = center_bin_to_predict
-        bin_radius = int(self.center_bin_to_predict / 2)
-        self._start_radius = bin_radius
-        self._end_radius = bin_radius + self.center_bin_to_predict % 2
 
         self.strand = strand
-        self._surrounding_sequence_radius = (
-            self.sequence_length - self.center_bin_to_predict
-        ) // 2
 
         if self.cell_wise or self.multi_ct_target:
             self._cell_types = []
@@ -245,6 +238,15 @@ class EncodeDataset(torch.utils.data.Dataset):
         if self.samples_mode:
             self.samples = intervals
         else:
+            self.center_bin_to_predict = center_bin_to_predict
+            bin_radius = int(self.center_bin_to_predict / 2)
+            self._start_radius = bin_radius
+            self._end_radius = bin_radius + self.center_bin_to_predict % 2
+            self._surrounding_sequence_radius = (
+                        self.sequence_length - self.center_bin_to_predict
+            ) // 2
+
+
             self.intervals = intervals
             self.intervals_length_sums = [0]
             for chrom, pos_start, pos_end in self.intervals:

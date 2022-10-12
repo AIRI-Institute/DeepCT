@@ -1,0 +1,207 @@
+---
+ops: [train]
+lr: 0.0001
+lr_scheduler: {
+    class: !import torch.optim.lr_scheduler.CosineAnnealingLR,
+    class_args: {
+        T_max: 1750020,
+    }
+}
+model: {
+    path: src/deepct_model_multi_ct_q_mpi.py,
+    class: qDeepCT,
+    class_args:{
+        sequence_length: &seqLen 1000,
+        n_cell_types: 793,
+        sequence_embedding_length: 256,
+        cell_type_embedding_length: 32,
+        final_embedding_length: 256,
+        n_genomic_features: 40,
+        dropout_rate: 0.3
+    }
+}
+
+dataset: {
+    path: src/dataset.py,
+    class: EncodeDataset,
+    train_sampler_class: LargeRandomSampler,
+    validation_sampler_class: SubsetRandomSampler,
+    validation_sampler_args: {num_samples: 8000},
+
+    distinct_features_path: /mnt/10tb/datasets/DeepCT/dataset_data/memmap_datasets/Boix_memmap_wCAGE/distinct_features_nonTreated.qcfiltered.wCAGE.removed_liver_male_adult_32y_H3K27ac.txt,
+    target_features_path: /mnt/datasets/DeepCT/dataset_data/q_features_mask_all/target_features.txt,
+    # sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/q_features_masktest/target_intervals_wo_chrY.bed, # TODO - check
+
+    train_intervals_path: /mnt/10tb/datasets/DeepCT/dataset_data/memmap_datasets/Boix_memmap_wCAGE/dataset_locations_exported.updatedIndexbed.wochroms6789,
+    validation_intervals_path: /mnt/10tb/datasets/DeepCT/dataset_data/memmap_datasets/Boix_memmap_wCAGE/dataset_locations_exported.updatedIndexbed.chr6_and_chr7,
+    test_intervals_path: /mnt/10tb/datasets/DeepCT/dataset_data/memmap_datasets/Boix_memmap_wCAGE/dataset_locations_exported.updatedIndexbed.chr8_and_chr9,
+
+    test_holdout: [chr8, chr9],
+    validation_holdout: [chr6, chr7],
+
+    dataset_args: {
+        reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
+        masked_tracks_path: /mnt/datasets/DeepCT/dataset_data/q_features_mask_all/masked_tracks.txt,
+        cell_wise: True,
+        samples_mode: True,
+        multi_ct_target: True,
+        sequence_length: *seqLen,
+        feature_thresholds: None, #0.5,
+        position_skip: None, #100,
+        target_class: !import selene_sdk.targets.qSeqMemMapFeatures,
+        target_init_kwargs: {
+            target_folder_path: /mnt/datasets/DeepCT/dataset_data/memmap_datasets/Boix_memmap_wCAGE/data/, 
+            memmap_shapes_path: /mnt/datasets/DeepCT/dataset_data/memmap_datasets/Boix_memmap_wCAGE/memmap_shapes.tsv, 
+            memmap_tracks_file: /mnt/datasets/DeepCT/dataset_data/memmap_datasets/Boix_memmap_wCAGE/distinct_features_nonTreated.qcfiltered.wCAGE.removed_liver_male_adult_32y_H3K27ac.txt,
+        }
+    },
+    loader_args: {
+        batch_size: 128,
+        num_workers: 8,
+    },
+    train_transform: !obj:torchvision.transforms.Compose {
+        transforms: [
+            !obj:src.transforms.PermuteSequenceChannels {},
+            !obj:src.transforms.RandomReverseStrand {
+                p: 0.5,
+            },
+            # !obj:src.transforms.LogTargets {
+            #     pseudocount: 0.001
+            # },
+            # !obj:src.transforms.ClipTargets {
+            #   amin: -1.0,
+            #   amax: 4.0
+            # }
+        ]
+    },
+    validation_transform: !obj:torchvision.transforms.Compose {
+        transforms: [
+            !obj:src.transforms.PermuteSequenceChannels {},
+            # !obj:src.transforms.LogTargets {
+            #     pseudocount: 0.001
+            # }
+        ]
+    }
+}
+
+quant2prob_transform: &quant2prob_transform !obj:torchvision.transforms.Compose {
+  transforms: [
+    !obj:src.transforms.MeanAndDeviation2AbsolutePrediction {
+        transform_predictions: True,
+        transform_targets: False
+    },
+    !obj:src.transforms.Quantitative2Sigmoid {
+        transform_predictions: True,
+        transform_targets: False,
+        threshold: 1.4816
+    },
+    !obj:src.transforms.Quantitative2Qualitative {
+        transform_predictions: False,
+        transform_targets: True,
+        threshold: 1.4816
+    },
+    !obj:src.transforms.Concat_batches {
+        transform_predictions: True,
+        transform_targets: True,
+        transform_masks: True,
+    }]
+}
+
+quant2prob_transform_masked_tracks: &quant2prob_transform_masked_tracks !obj:torchvision.transforms.Compose {
+  transforms: [  
+    !obj:src.transforms.InvertMaskedTracks {},
+    !obj:src.transforms.MeanAndDeviation2AbsolutePrediction {
+        transform_predictions: True,
+        transform_targets: False
+    },
+    !obj:src.transforms.Quantitative2Sigmoid {
+        transform_predictions: True,
+        transform_targets: False,
+        threshold: 1.4816
+    },
+    !obj:src.transforms.Quantitative2Qualitative {
+        transform_predictions: False,
+        transform_targets: True,
+        threshold: 1.4816
+    },
+    !obj:src.transforms.Concat_batches {
+        transform_predictions: True,
+        transform_targets: True,
+        transform_masks: True,
+    }]
+}
+
+batch_merging_transform: &batch_merging_transform !obj:torchvision.transforms.Compose {
+  transforms: [
+    !obj:src.transforms.MeanAndDeviation2AbsolutePrediction {
+        transform_predictions: True,
+        transform_targets: False
+    },
+    !obj:src.transforms.Concat_batches {
+        transform_predictions: True,
+        transform_targets: True,
+        transform_masks: True,
+    }]
+}
+
+batch_merging_transform_masked_tracks: &batch_merging_transform_masked_tracks !obj:torchvision.transforms.Compose {
+  transforms: [  
+    !obj:src.transforms.InvertMaskedTracks {},
+    !obj:src.transforms.MeanAndDeviation2AbsolutePrediction {
+        transform_predictions: True,
+        transform_targets: False
+    },
+    !obj:src.transforms.Concat_batches {
+        transform_predictions: True,
+        transform_targets: True,
+        transform_masks: True,
+    }]
+}
+
+train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
+    # checkpoint_resume: None, #/disk2/vsfishman/DeepCT/DeepCT_outputs/final/qDeepCTMPI_control/2021-11-06-12-02-44/checkpoint.pth.tar
+    n_epochs: 10,
+    report_stats_every_n_steps: 2000,
+    save_checkpoint_every_n_steps: 2000,
+    report_gt_feature_n_positives: 2,
+    device: 'cuda:1',
+    data_parallel: False,
+    logging_verbosity: 2,
+    log_confusion_matrix: False,
+    save_track_metrics_during_training: True,
+    metrics: {
+        # accuracy: !import sklearn.metrics.accuracy_score,
+        # accuracy_baseline: !import sklearn.metrics.accuracy_score,
+        average_precision: !import sklearn.metrics.average_precision_score,
+        average_precision_masked: !import sklearn.metrics.average_precision_score,
+        # average_precision_baseline: !import sklearn.metrics.average_precision_score,
+        # f1: !import src.metrics.f1_score,
+        # precision: !import src.metrics.precision_score,
+        # recall: !import src.metrics.recall_score,
+        # roc_auc: !import sklearn.metrics.roc_auc_score,
+        # roc_auc_baseline: !import sklearn.metrics.roc_auc_score,
+        # mse: !import sklearn.metrics.mean_squared_error,
+        r2: !import sklearn.metrics.r2_score,
+        r2_masked: !import sklearn.metrics.r2_score,
+        # r2_baseline: !import sklearn.metrics.r2_score,
+    },
+    metrics_transforms: {
+        # accuracy: *quant2qual_transform,
+        # accuracy_baseline: *quant2qual_MPV_baseline_transform, 
+        average_precision: *quant2prob_transform,
+        average_precision_masked: *quant2prob_transform_masked_tracks,
+        # average_precision_baseline: *quant2prob_MPV_baseline_transform,
+        # roc_auc: *quant2prob_transform,
+        # roc_auc_baseline: *quant2prob_MPV_baseline_transform,
+        r2: *batch_merging_transform,
+        r2_masked: *batch_merging_transform_masked_tracks,
+        # r2_baseline: *batch_merging_baseline_transform
+    }
+}
+
+criterion: !obj:src.criterion.WeightedMSELossWithMPI {alpha: 0.0002}
+output_dir: /disk2/vsfishman/DeepCT/DeepCT_outputs/2022/qDeepCTMPI_masked_tracks_experiment/
+
+random_seed: 1447
+create_subdirectory: True
+...
