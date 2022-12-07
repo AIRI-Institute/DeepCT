@@ -195,6 +195,7 @@ class TrainMaskedCTModel(object):
         log_confusion_matrix=True,
         score_threshold=0.5,
         save_track_metrics_during_training=True,
+        no_eval=False,
     ):
         """
         Constructs a new `TrainModel` object.
@@ -206,6 +207,11 @@ class TrainMaskedCTModel(object):
         self.n_cell_types = n_cell_types
         self.ct_masks = ct_masks
         self.dataloaders = dataloaders
+        self.no_eval = no_eval
+        if self.no_eval:
+            self.switch_every_10_epochs = True
+        else:
+            self.switch_every_10_epochs = False
         n_epoch_steps = sum(
             [len(train_loader) for train_loader, val_loader in self.dataloaders]
         )
@@ -405,10 +411,10 @@ class TrainMaskedCTModel(object):
                         t_f = time()
                         time_per_batch.append(t_f - t_i)
                         report_train_losses.append(loss)
-                        report_train_predictions.append(prediction)
-                        report_train_targets.append(target)
+                        report_train_predictions.append(prediction[::8])
+                        report_train_targets.append(target[::8])
                         if self.masked_targets:
-                            report_train_target_masks.append(target_mask)
+                            report_train_target_masks.append(target_mask[::8])
                         total_steps += 1
                         self._update_and_log_lr_if_needed(total_steps)
 
@@ -472,6 +478,11 @@ class TrainMaskedCTModel(object):
                 (train_batch_loader, valid_batch_loader),
                 current_ct_mask,
             ) in enumerate(dict(random.sample(l, len(self.fold_map.keys()))).items()):
+                if self.switch_every_10_epochs :
+                    if epoch % 10 == 0 and chunk == 0:
+                        self.no_eval = False
+                    else:
+                        self.no_eval = True
 
                 self.current_ct_mask = self.ct_indices_to_mask(current_ct_mask)
 
@@ -484,10 +495,10 @@ class TrainMaskedCTModel(object):
                     t_f = time()
                     time_per_batch.append(t_f - t_i)
                     report_train_losses.append(loss)
-                    report_train_predictions.append(prediction)
-                    report_train_targets.append(target)
+                    report_train_predictions.append(prediction[::8])
+                    report_train_targets.append(target[::8])
                     if self.masked_targets:
-                        report_train_target_masks.append(target_mask)
+                        report_train_target_masks.append(target_mask[::8])
                     total_steps += 1
                     self._update_and_log_lr_if_needed(total_steps)
 
@@ -731,24 +742,25 @@ class TrainMaskedCTModel(object):
         train_loss = np.average(train_losses)
         self._train_logger.info(train_loss)
         self._writer.add_scalar("loss/train", train_loss, step)
+        logger.info("training loss: {0}".format(train_loss))
 
-        train_scores = self._compute_metrics(
-            train_predictions,
-            train_targets,
-            train_target_masks,
-            log_prefix="train",
-        )
-
-        for k in sorted(self._validation_metrics.metrics.keys()):
-            if k in train_scores and train_scores[k]:
-                self._writer.add_scalar(f"model_{k}/train", train_scores[k], step)
-
-        if self.save_track_metrics_during_training:
-            self._validation_metrics.write_feature_scores_to_file(
-                os.path.join(self.output_dir, str(step) + "_train_metrics.txt")
+        if not self.no_eval:
+            train_scores = self._compute_metrics(
+                train_predictions,
+                train_targets,
+                train_target_masks,
+                log_prefix="train",
             )
 
-        logger.info("training loss: {0}".format(train_loss))
+            for k in sorted(self._validation_metrics.metrics.keys()):
+                if k in train_scores and train_scores[k]:
+                    self._writer.add_scalar(f"model_{k}/train", train_scores[k], step)
+
+            if self.save_track_metrics_during_training:
+                self._validation_metrics.write_feature_scores_to_file(
+                    os.path.join(self.output_dir, str(step) + "_train_metrics.txt")
+                )
+
 
     def _validate_and_log_metrics(self, val_loader, step):
         (
@@ -762,60 +774,60 @@ class TrainMaskedCTModel(object):
         validation_loss = valid_scores["loss"]
         self._writer.add_scalar("loss/test", validation_loss, step)
         to_log = [str(validation_loss)]
-
-        # log model metrics
-        for k in sorted(self._validation_metrics.metrics.keys()):
-            if k in valid_scores and valid_scores[k]:
-                to_log.append(str(valid_scores[k]))
-                self._writer.add_scalar(f"model_{k}/val", valid_scores[k], step)
-            else:
-                to_log.append("NA")
-
-        if "loss" in baselines_scores:
-            self._writer.add_scalar(
-                "baseline_loss/test", baselines_scores["loss"], step
-            )
-            to_log.append(str(baselines_scores["loss"]))
-
-        # log baseline metrics
-        for k in sorted(self._baseline_validation_metrics.metrics.keys()):
-            if k in baselines_scores and baselines_scores[k]:
-                to_log.append(str(baselines_scores[k]))
-                self._writer.add_scalar(f"baseline_{k}/val", baselines_scores[k], step)
-            else:
-                to_log.append("NA")
-
-        self._validation_logger.info("\t".join(to_log))
-
         logger.info("validation loss: {0}".format(validation_loss))
 
-        if self.save_track_metrics_during_training:
-            self._validation_metrics.write_feature_scores_to_file(
-                os.path.join(self.output_dir, str(step) + "_val_metrics.txt")
-            )
-            self._baseline_validation_metrics.write_feature_scores_to_file(
-                os.path.join(self.output_dir, str(step) + "_val_baseline_metrics.txt")
-            )
+        if not self.no_eval:
+            # log model metrics
+            for k in sorted(self._validation_metrics.metrics.keys()):
+                if k in valid_scores and valid_scores[k]:
+                    to_log.append(str(valid_scores[k]))
+                    self._writer.add_scalar(f"model_{k}/val", valid_scores[k], step)
+                else:
+                    to_log.append("NA")
 
-        if self.log_confusion_matrix:
-            if self.masked_targets:
-                masked_targets = all_targets.flatten()[all_target_masks.flatten()]
-                masked_predictions = all_predictions.flatten()[
-                    all_target_masks.flatten()
-                ]
-                cm = confusion_matrix(
-                    masked_targets, masked_predictions > self.score_threshold
+            if "loss" in baselines_scores:
+                self._writer.add_scalar(
+                    "baseline_loss/test", baselines_scores["loss"], step
                 )
-            else:
-                cm = confusion_matrix(
-                    all_targets.flatten(),
-                    all_predictions.flatten() > self.score_threshold,
+                to_log.append(str(baselines_scores["loss"]))
+
+            # log baseline metrics
+            for k in sorted(self._baseline_validation_metrics.metrics.keys()):
+                if k in baselines_scores and baselines_scores[k]:
+                    to_log.append(str(baselines_scores[k]))
+                    self._writer.add_scalar(f"baseline_{k}/val", baselines_scores[k], step)
+                else:
+                    to_log.append("NA")
+
+            self._validation_logger.info("\t".join(to_log))
+
+            if self.save_track_metrics_during_training:
+                self._validation_metrics.write_feature_scores_to_file(
+                    os.path.join(self.output_dir, str(step) + "_val_metrics.txt")
                 )
-            cm_plot = ConfusionMatrixDisplay(confusion_matrix=cm)
-            cm_plot.plot()
-            self._writer.add_figure(
-                "confusion_matrix", cm_plot.figure_, global_step=step
-            )
+                self._baseline_validation_metrics.write_feature_scores_to_file(
+                    os.path.join(self.output_dir, str(step) + "_val_baseline_metrics.txt")
+                )
+
+            if self.log_confusion_matrix:
+                if self.masked_targets:
+                    masked_targets = all_targets.flatten()[all_target_masks.flatten()]
+                    masked_predictions = all_predictions.flatten()[
+                        all_target_masks.flatten()
+                    ]
+                    cm = confusion_matrix(
+                        masked_targets, masked_predictions > self.score_threshold
+                    )
+                else:
+                    cm = confusion_matrix(
+                        all_targets.flatten(),
+                        all_predictions.flatten() > self.score_threshold,
+                    )
+                cm_plot = ConfusionMatrixDisplay(confusion_matrix=cm)
+                cm_plot.plot()
+                self._writer.add_figure(
+                    "confusion_matrix", cm_plot.figure_, global_step=step
+                )
 
         return validation_loss
 
@@ -881,12 +893,16 @@ class TrainMaskedCTModel(object):
             all_target_masks,
         ) = self._evaluate_on_ct(val_loader)
 
-        average_scores = self._compute_metrics(
-            all_predictions, all_targets, all_target_masks, log_prefix="validation"
-        )
-        baselines_scores = self._compute_baseline_score(
-            baseline, all_targets, all_target_masks, log_prefix="validation"
-        )
+        if not self.no_eval:
+            average_scores = self._compute_metrics(
+                all_predictions, all_targets, all_target_masks, log_prefix="validation"
+            )
+            baselines_scores = self._compute_baseline_score(
+                baseline, all_targets, all_target_masks, log_prefix="validation"
+            )
+        else:
+            average_scores = {}
+            baselines_scores = {}
         average_scores["loss"] = average_loss
 
         return (
@@ -982,6 +998,28 @@ class TrainMaskedCTModel(object):
             for batch in val_loader:
                 target_cnt[i] = target_cnt[i] + batch[2].sum(axis=0)
             loader_results = self._evaluate_on_ct(val_loader)
+            """
+            (
+                average_loss,
+                all_predictions,
+                all_targets,
+                baseline,
+                all_target_masks,
+            ) = loader_results
+
+            average_scores = self._compute_metrics(
+                all_predictions, all_targets, all_target_masks, log_prefix="validation"
+            )
+            baselines_scores = self._compute_baseline_score(
+                baseline, all_targets, all_target_masks, log_prefix="validation"
+            )
+            self._validation_metrics.write_feature_scores_to_file(
+                os.path.join(self.output_dir, f"final_{i}_val_metrics.txt")
+            )
+            self._baseline_validation_metrics.write_feature_scores_to_file(
+                os.path.join(self.output_dir, f"final_{i}_val_baseline_metrics.txt")
+            )
+            """
 
             if all_results is None:
                 all_results = [[] for i in range(len(loader_results))]
@@ -992,6 +1030,7 @@ class TrainMaskedCTModel(object):
                 else:
                     all_res.append(loader_res)
             del loader_results
+
         target_cnt = torch.stack(target_cnt)
         # import pdb; pdb.set_trace()
         (
