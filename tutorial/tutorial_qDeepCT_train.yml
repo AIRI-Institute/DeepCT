@@ -1,0 +1,160 @@
+---
+# operations to perform, like training, evaluation, or analyzing sequences
+ops: [train]
+
+# LR and LR update scheduler
+lr: 0.0001
+lr_scheduler: {
+    class: !import torch.optim.lr_scheduler.CosineAnnealingLR,
+    class_args: {
+        T_max: 1750020,
+    }
+}
+
+# model parameters
+model: {
+    path: src/deepct_model_multi_ct_q_mpi.py,
+    class: qDeepCT,
+    class_args: {
+        sequence_length: 1000,
+        n_cell_types: 1,
+        sequence_embedding_length: 256,
+        cell_type_embedding_length: 32,
+        final_embedding_length: 256,
+        n_genomic_features: 1,
+        dropout_rate: 0.3
+    }
+}
+
+# dataset files and parameters
+dataset: {
+    path: src/dataset.py,
+    class: EncodeDataset,
+    train_sampler_class: LargeRandomSampler,
+    validation_sampler_class: SubsetRandomSampler,
+    validation_sampler_args: {num_samples: 1600},
+
+    distinct_features_path: tutorial/tutorial_data/distinct_features.txt,
+    target_features_path: tutorial/tutorial_data/target_features.txt,
+    sampling_intervals_path: tutorial/tutorial_data/target_intervals.bed,
+    test_holdout: [chr8, chr9],
+    validation_holdout: [chr6, chr7],
+
+    dataset_args: {
+        reference_sequence_path: tutorial/tutorial_data/mini_male.hg19.fasta,
+        cell_wise: True,
+        multi_ct_target: True,
+        sequence_length: 1000,
+        center_bin_to_predict: 200,
+        feature_thresholds: 0.5,
+        position_skip: 100,
+        target_class: !import selene_sdk.targets.qGenomicFeatures,
+        target_init_kwargs: {
+            # features : , Note: this init arg will be added during dataset initialization 
+            feature_paths_file : tutorial/tutorial_data/testqDatasetMapping.tsv,
+            agg_function : "max",
+        }
+
+    },
+    loader_args: {
+        batch_size: 64,
+        num_workers: 8,
+    },
+
+    # target transformation for train and validation
+    train_transform: !obj:torchvision.transforms.Compose {
+        transforms: [
+            !obj:src.transforms.PermuteSequenceChannels {},
+            !obj:src.transforms.RandomReverseStrand {
+                p: 0.5,
+            },
+            !obj:src.transforms.LogTargets {
+                pseudocount: 0.001
+            },
+            !obj:src.transforms.ClipTargets {
+              amin: -1.0,
+              amax: 4.0
+            }
+        ]
+    },
+    validation_transform: !obj:torchvision.transforms.Compose {
+        transforms: [
+            !obj:src.transforms.PermuteSequenceChannels {},
+            !obj:src.transforms.LogTargets {
+                pseudocount: 0.001
+            }
+        ]
+    }
+}
+
+
+# define model output transformation for classification metrics calculation
+quant2prob_transform: &quant2prob_transform !obj:torchvision.transforms.Compose {
+  transforms: [  
+    !obj:src.transforms.MeanAndDeviation2AbsolutePrediction {
+        transform_predictions: True,
+        transform_targets: False
+    },
+    !obj:src.transforms.Quantitative2Sigmoid {
+        transform_predictions: True,
+        transform_targets: False,
+        threshold: 1.4816
+    },
+    !obj:src.transforms.Quantitative2Qualitative {
+        transform_predictions: False,
+        transform_targets: True,
+        threshold: 1.4816
+    },
+    !obj:src.transforms.Concat_batches {
+        transform_predictions: True,
+        transform_targets: True,
+        transform_masks: True,
+    }]
+}
+
+# define model output transformation for regression metrics calculation
+batch_merging_transform: &batch_merging_transform !obj:torchvision.transforms.Compose {
+  transforms: [  
+    !obj:src.transforms.MeanAndDeviation2AbsolutePrediction {
+        transform_predictions: True,
+        transform_targets: False
+    },
+    !obj:src.transforms.Concat_batches {
+        transform_predictions: True,
+        transform_targets: True,
+        transform_masks: True,
+    }
+    ]
+}
+
+# model training class and parameters
+train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
+    n_epochs: 10,
+    report_stats_every_n_steps: 1000,
+    save_track_metrics_during_training: True,
+    save_checkpoint_every_n_steps: 5000,
+    report_gt_feature_n_positives: 10,
+    device: 'cuda:0',
+    data_parallel: False,
+    logging_verbosity: 2,
+    log_confusion_matrix: False,
+    metrics: {
+        average_precision: !import sklearn.metrics.average_precision_score,
+        r2: !import sklearn.metrics.r2_score,
+    },
+    metrics_transforms: {
+        average_precision: *quant2prob_transform,
+        r2: *batch_merging_transform,
+    }
+}
+
+# define optimization criterion
+criterion: !obj:src.criterion.WeightedMSELossWithMPI {alpha: 0.0002}
+
+# output directory
+output_dir: tutorial/model_output/
+create_subdirectory: False
+
+# specify random seed
+random_seed: 10
+...
