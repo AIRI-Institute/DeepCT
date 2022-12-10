@@ -255,8 +255,19 @@ class TrainMaskedCTModel(object):
             metrics=metrics,
             metrics_transforms=metrics_transforms,
         )
+
         # create separate baseline metrics object without target sigmoid transformation
-        if not self.dataloaders[0][0].dataset.quantitative_features:
+        first_dataset = self.dataloaders[0][0].dataset
+        self.quantitative_target = False
+        if (
+            hasattr(first_dataset, "quantitative_features")
+            and first_dataset.quantitative_features
+        ) or (
+            hasattr(first_dataset, "target_class")
+            and first_dataset.target_class.__name__ == "qGenomicFeatures"
+        ):
+            self.quantitative_target = True
+        if self.quantitative_target:
             baseline_metrics_transforms = {}
             for m, t in metrics_transforms.items():
                 if t.__class__.__name__ == "Compose":
@@ -645,7 +656,7 @@ class TrainMaskedCTModel(object):
             target_mask_val[:, ~self.current_ct_mask, :] = False
 
             # compute a baseline
-            if data_loader.dataset.quantitative_features:
+            if self.quantitative_target:
                 baseline = torch.zeros(
                     targets.shape[0],
                     targets.shape[1] + 1,
