@@ -134,7 +134,13 @@ class TrainEncodeDatasetModel(object):
         Default is `True`. Specify whether confusion matrix should be logged.
     score_threshold : int, optional
         Default is 0.5. Score threshold to determine prediction based on the model output score.
-
+    max_train_sample_size_for_metrices : int, optional
+        Default is None, which means that all data acquired before report_stats_every_n_steps 
+        triggered will be used for train metrices computation. If integer provided, this will 
+        be maximum number of batches used for train metrices computation.
+    early_data_copy_to_cpu : bool, optional
+        copy data on CPU before running transforms and computing metrics. Deafault is False
+        Setting True will slow computations but save GPU RAM
 
     Attributes
     ----------
@@ -176,6 +182,12 @@ class TrainEncodeDatasetModel(object):
     metrics_transforms: dict
         A dictionary that maps metric names (`str`) to a transform function
         which should be applied to data before metrics computation
+    save_track_metrics_during_training : bool
+        whether metric for each track should be saved at each nth_step_report_stats
+        if not only average value for each metric reported
+    early_data_copy_to_cpu : bool
+        copy data to cpu before transforms. Deafault is False, which is faster but 
+        requirers more GPU memory 
     """
 
     def __init__(
@@ -204,6 +216,9 @@ class TrainEncodeDatasetModel(object):
         metrics_transforms=dict(roc_auc=None, average_precision=None),
         log_confusion_matrix=True,
         score_threshold=0.5,
+        save_track_metrics_during_training=False,
+        max_train_sample_size_for_metrices=None,
+        early_data_copy_to_cpu=False
     ):
         """
         Constructs a new `TrainModel` object.
@@ -224,6 +239,8 @@ class TrainEncodeDatasetModel(object):
         self.n_epochs = n_epochs
         self.nth_step_report_stats = report_stats_every_n_steps
         self.nth_step_save_checkpoint = None
+        if log_embeddings_every_n_steps == "None":
+            log_embeddings_every_n_steps = None
         self.nth_step_log_embeddings = log_embeddings_every_n_steps
 
         if not save_checkpoint_every_n_steps:
@@ -243,16 +260,16 @@ class TrainEncodeDatasetModel(object):
 
         torch.set_num_threads(cpu_n_threads)
 
-        self.device = torch.device(device)
         self.data_parallel = data_parallel
-
         if self.data_parallel:
-            self.model = nn.DataParallel(model)
+            self.model = nn.DataParallel(model, device_ids=device, output_device=device[0])
+            self.device = self.model.device_ids[0]
             logger.debug("Wrapped model in DataParallel")
         else:
-            self.model.to(self.device)
-            self.criterion.to(self.device)
-            logger.debug(f"Set modules to use device {device}")
+            self.device = torch.device(device)
+        self.model.to(self.device)
+        self.criterion.to(self.device)
+        logger.debug(f"Set modules to use device {device}")
 
         os.makedirs(output_dir, exist_ok=True)
         self.output_dir = output_dir
@@ -263,19 +280,37 @@ class TrainEncodeDatasetModel(object):
             verbosity=logging_verbosity,
         )
 
+        # some transform require dataset parameters to work
+        # however, dataset object is not yet available when these transforms
+        # are initialized. Thus we use a dirty hack to pass dataset params there
+        for transform in metrics_transforms.values():
+            try: # transform might be an object with method set_masks
+                transform.set_masks(self.train_loader.dataset)
+            except AttributeError:
+                for tr in transform.transforms:
+                    try:
+                        tr.set_masks(self.train_loader.dataset)
+                        logger.info("Info: masks set for transform "+\
+                                            str(tr))
+                    except AttributeError:
+                        pass
+                        
         self._validation_metrics = PerformanceMetrics(
             lambda idx: self.train_loader.dataset.target_features[idx],
+            lambda idx: self.train_loader.dataset._cell_types[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
             metrics_transforms=metrics_transforms,
         )
         self._test_metrics = PerformanceMetrics(
             lambda idx: self.train_loader.dataset.target_features[idx],
+            lambda idx: self.train_loader.dataset._cell_types[idx],
             report_gt_feature_n_positives=report_gt_feature_n_positives,
             metrics=metrics,
             metrics_transforms=metrics_transforms,
         )
         self.log_confusion_matrix = log_confusion_matrix
+        self.save_track_metrics_during_training = save_track_metrics_during_training
 
         self._start_step = 0
         # TODO: Should this be set when it is used later? Would need to if we want to
@@ -297,16 +332,18 @@ class TrainEncodeDatasetModel(object):
                 checkpoint["state_dict"], self.model
             )
 
-            self._start_step = checkpoint["step"]
-            # if self._start_step >= self.n_epochs:
-            #    self.n_epochs += self._start_step
+            if "step" in checkpoint:
+                self._start_step = checkpoint["step"]
 
-            self._min_loss = checkpoint["min_loss"]
-            self.optimizer.load_state_dict(checkpoint["optimizer"])
-            for state in self.optimizer.state.values():
-                for k, v in state.items():
-                    if isinstance(v, torch.Tensor):
-                        state[k] = v.to(self.device)
+            if "min_loss" in checkpoint:
+                self._min_loss = checkpoint["min_loss"]
+
+            if "optimizer" in checkpoint:
+                self.optimizer.load_state_dict(checkpoint["optimizer"])
+                for state in self.optimizer.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor):
+                            state[k] = v.to(self.device)
 
             logger.info(
                 ("Resuming from checkpoint: step {0}, min loss {1}").format(
@@ -329,6 +366,9 @@ class TrainEncodeDatasetModel(object):
         )
 
         self.score_threshold = score_threshold
+        self.max_train_sample_size_for_metrices=max_train_sample_size_for_metrices
+        self.early_data_copy_to_cpu=early_data_copy_to_cpu
+
 
     def train_and_validate(self):
         """
@@ -359,10 +399,18 @@ class TrainEncodeDatasetModel(object):
                 t_f = time()
                 time_per_batch.append(t_f - t_i)
                 report_train_losses.append(loss)
-                report_train_predictions.append(prediction)
-                report_train_targets.append(target)
-                if self.masked_targets:
-                    report_train_target_masks.append(target_mask)
+                if self.max_train_sample_size_for_metrices is None or\
+                        len(report_train_targets)<=self.max_train_sample_size_for_metrices:
+                    if self.early_data_copy_to_cpu:
+                        report_train_predictions.append(prediction.cpu())
+                        report_train_targets.append(target.cpu())
+                        if self.masked_targets:
+                            report_train_target_masks.append(target_mask.cpu())
+                    else:
+                        report_train_predictions.append(prediction)
+                        report_train_targets.append(target)
+                        if self.masked_targets:
+                            report_train_target_masks.append(target_mask)
                 total_steps += 1
                 self._update_and_log_lr_if_needed(total_steps)
 
@@ -467,6 +515,7 @@ class TrainEncodeDatasetModel(object):
             target_mask,
             loss.item(),
         )
+        return return_values
 
     def _update_and_log_lr_if_needed(self, total_steps, validation_loss=None, log=True):
         # torch.optim.lr_scheduler.ReduceLROnPlateau is the only scheduler
@@ -514,9 +563,13 @@ class TrainEncodeDatasetModel(object):
             log_prefix="train",
         )
 
+        # log train metrics
         for k in sorted(self._validation_metrics.metrics.keys()):
             if k in train_scores and train_scores[k]:
                 self._writer.add_scalar("{}/train".format(k), train_scores[k], step)
+
+        if self.save_track_metrics_during_training:
+            self._validation_metrics.write_feature_scores_to_file(self.output_dir+"/"+str(step)+"_train_metrics.txt")
 
         logger.info("training loss: {0}".format(train_loss))
 
@@ -526,6 +579,7 @@ class TrainEncodeDatasetModel(object):
         self._writer.add_scalar("loss/test", validation_loss, step)
         to_log = [str(validation_loss)]
 
+        # log validation metrics
         for k in sorted(self._validation_metrics.metrics.keys()):
             if k in valid_scores and valid_scores[k]:
                 to_log.append(str(valid_scores[k]))
@@ -536,9 +590,12 @@ class TrainEncodeDatasetModel(object):
 
         logger.info("validation loss: {0}".format(validation_loss))
 
+        if self.save_track_metrics_during_training:
+            self._validation_metrics.write_feature_scores_to_file(self.output_dir+"/"+str(step)+"_val_metrics.txt")
+
         if self.log_confusion_matrix:
             raise NotImplementedError
-            # TODO baseically it's not coplicated to fix this part
+            # TODO basically it's not complicated to fix this part
             # just convert tensors to np.array and concatenate
             if self.masked_targets:
                 masked_targets = all_targets.flatten()[all_target_masks.flatten()]
@@ -608,11 +665,16 @@ class TrainEncodeDatasetModel(object):
                 if self.criterion.reduction == "sum":
                     loss = loss / self.criterion.weight.sum()
 
-                all_predictions.append(outputs)
-                all_targets.append(targets)
-                if self.masked_targets:
-                    all_target_masks.append(target_mask)
-
+                if self.early_data_copy_to_cpu:
+                    all_predictions.append(outputs.cpu())
+                    all_targets.append(targets.cpu())
+                    if self.masked_targets:
+                        all_target_masks.append(target_mask.cpu())
+                else:
+                    all_predictions.append(outputs)
+                    all_targets.append(targets)
+                    if self.masked_targets:
+                        all_target_masks.append(target_mask)
                 batch_losses.append(loss.item())
 
         return np.average(batch_losses), all_predictions, all_targets, all_target_masks
