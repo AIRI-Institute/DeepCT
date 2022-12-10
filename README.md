@@ -3,6 +3,9 @@
 ### Disclaimer:
 This code is provided under [Apache License, Version 2.0](https://opensource.org/licenses/Apache-2.0)
 
+## Tutorial
+You can now refer to our [Google Colab tutorial](https://colab.research.google.com/drive/1F4k-ee7MghWdOM-vX_4nusLpEq62pi18?usp=sharing) to play with our model. For inference on a list of variants please refer to our [inference helper repository]()https://github.com/AIRI-Institute/DeepCT-inference-helper.
+
 ## How to run:
 
 1. Install requirements
@@ -30,7 +33,7 @@ There are several scripts to download and process the data.
 2. Run training using your configuration file, for example `model_configs/train_example.yml`.
 
 Config files for benchmarks mentioned in the paper (most configs assume necessary data files have already been generated and placed into a folder `dataset_data`):
-* cell type specificity: `model_configs/boix_train_masked_ct.yml` (classification) and `boix_qDeepCT_train_masked_ct.yml` (regression). 
+* cell type specificity: `model_configs/boix_train_masked_ct.yml` (classification). 
 
     *Note:* Before running this config you should also generate all necessary data files for tracks forming a maximal clique and place them into a folder `dataset_data/maximal_clique_with0` and additionally run `src/split_intervals.py` and `src/split_cell_types.npy` and place their results in the same folder;
 * sequence specificity: `model_configs/boix_all_multi_ct_train.yml` (classification) and `model_configs/boix_allNonTreated_highqual_multi_ct_qDeepCT_train_2021-11-15-03-30-59.yml` (regression);
