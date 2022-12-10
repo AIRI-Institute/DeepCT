@@ -57,7 +57,7 @@ dataset: {
 
     },
     loader_args: {
-        batch_size: 64,
+        batch_size: 16,
         num_workers: 8,
     },
 
@@ -134,7 +134,7 @@ train_model: !obj:src.train.train_encode_dataset.TrainEncodeDatasetModel {
     save_track_metrics_during_training: True,
     save_checkpoint_every_n_steps: 5000,
     report_gt_feature_n_positives: 10,
-    device: 'cuda:0',
+    device: 'cpu',
     data_parallel: False,
     logging_verbosity: 2,
     log_confusion_matrix: False,
