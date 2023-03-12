@@ -1,5 +1,5 @@
-numpy==1.20.1
-torch==1.8.1
-torchvision==0.9.1
-git+git://github.com/sberbank-ai-lab/selene.git@arlapin/dev#egg=selene-sdk
+numpy==1.22.3
+torch==1.9.1
+torchvision==0.10.1
+git+ssh://github.com/AIRI-Institute/selene.git#egg=selene-sdk
 pyBigWig==0.3.17

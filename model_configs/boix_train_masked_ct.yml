@@ -4,7 +4,7 @@ lr: 0.0001
 lr_scheduler: {
     class: !import torch.optim.lr_scheduler.CosineAnnealingLR,
     class_args: {
-        T_max: 1553400,
+        T_max: 1308200,
     }
 }
 model: {
@@ -15,11 +15,11 @@ model: {
     checkpoint_chunk: 0,
     class_args: {
         sequence_length: 1000,
-        n_cell_types: 181,
+        n_cell_types: 174,
         sequence_embedding_length: 256,
         cell_type_embedding_length: 32,
         final_embedding_length: 256,
-        n_genomic_features: 5,
+        n_genomic_features: 4,
     }
 }
 criterion: !obj:torch.nn.BCEWithLogitsLoss {
@@ -27,27 +27,21 @@ criterion: !obj:torch.nn.BCEWithLogitsLoss {
 }
 dataset: {
     debug: False,
-    path: /home/msindeeva/DeepCT/src/dataset.py,
+    path: src/dataset.py,
     class: EncodeDataset,
-    ct_fold_ids: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/cell_types_random_ids_k10.npy,
-    seq_fold_ids: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/split_intervals_no_overlap_k10.npy,
+    ct_fold_ids: dataset_data/Biox_et_al/complete_clique14_with0/cell_types_random_ids_k10_seed2454.npy,
+    seq_fold_ids: dataset_data/Biox_et_al/complete_clique14_with0/split_intervals_no_overlap_k10_seed2454.npy,
     train_sampler_class: LargeRandomSampler,
     train_sampler_args: {replacement: False},
 
-    distinct_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/distinct_features.txt,
-    target_features_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/target_features.txt,
-    sampling_intervals_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/target_intervals.bed,
+    distinct_features_path: dataset_data/Biox_et_al/complete_clique14_with0/distinct_features.txt,
+    target_features_path: dataset_data/Biox_et_al/complete_clique14_with0/target_features.txt,
+    sampling_intervals_path: dataset_data/Biox_et_al/complete_clique14_with0/target_intervals.bed,
     test_holdout: [chr8, chr9],
     validation_holdout: [chr6, chr7],
 
     dataset_args: {
-        reference_sequence_path: /mnt/datasets/DeepCT/male.hg19.fasta,
-        target_class: !import selene_sdk.targets.GenomicFeatures,
-        target_init_kwargs: {
-            input_path: /mnt/datasets/DeepCT/dataset_data/Biox_et_al/complete_clique1_with0/sorted_data.bed.gz,
-            feature_thresholds: 0.5,
-        },
-        target_path: None,
+        reference_sequence_path: dataset_data/male.hg19.fasta,
         cell_wise: True,
         multi_ct_target: True,
         sequence_length: 1000,
@@ -55,7 +49,12 @@ dataset: {
         feature_thresholds: 0.5,
         position_skip: 200,
         n_folds: 10,                    
-        fold: 0,
+        fold: 7,
+        target_class: !import selene_sdk.targets.GenomicFeatures,
+        target_init_kwargs: {
+            input_path: dataset_data/complete_clique14_with0/sorted_data.bed.gz, 
+            feature_thresholds: 0.5,
+        },
     },
     loader_args: {
         batch_size: 256,
@@ -70,8 +69,13 @@ dataset: {
             }
         ],
     },
-    val_transform: !obj:src.transforms.PermuteSequenceChannels {}
+    val_transform: !obj:torchvision.transforms.Compose {
+        transforms: [
+            !obj:src.transforms.PermuteSequenceChannels {},
+        ]
+    }
 }
+
 train_model: !obj:src.train.ct_masked_train.TrainMaskedCTModel {
     n_epochs: 40,
     report_gt_feature_n_positives: 2,
@@ -86,8 +90,7 @@ train_model: !obj:src.train.ct_masked_train.TrainMaskedCTModel {
     },
     log_confusion_matrix: False,
 }
-output_dir: DeepCT_outputs/boix/ct_v2/complete_clique1_with0_fix/kfold_10folds_LR0001/no_overlap/
+output_dir: DeepCT_outputs/boix/ct_v2/complete_clique14_with0_fix/kfold_10folds_LR0001/no_overlap/seed3793/
 
-random_seed: 1447
-create_subdirectory: True
-...
+random_seed: 3793
+create_subdirectory: False

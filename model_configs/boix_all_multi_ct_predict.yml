@@ -1,0 +1,55 @@
+---
+# based on encode_dnase_multi_ct_eval.yml from /home/msindeeva/DeepCT/model_configs, modified on Jun 23
+# and get_predictions.yml from selene examples
+ops: [analyze]
+
+model: {
+    path: src/deepct_model_multi_ct_q_mpi.py,
+    class: qDeepCT,
+    class_args: {
+        sequence_length: 1000,
+        n_cell_types: 794,
+        sequence_embedding_length: 256,
+        cell_type_embedding_length: 32,
+        final_embedding_length: 256,    
+        n_genomic_features: 40,
+    }
+}
+
+# TODO: some values could be copied automatically from the model class
+analyze_sequences: !obj:src.prediction.predict.AnalyzeSequences {
+    trained_model_path: /home/msindeeva/DeepCT/40_features_q_mpi_highQCsamples/best_model.pth.tar,
+    sequence_length: 1000,
+    features: !obj:selene_sdk.utils.load_features_list {
+        input_path: /mnt/datasets/DeepCT/dataset_data/q_features_all/target_features.txt
+    },
+    distinct_features: !obj:selene_sdk.utils.load_features_list {
+        input_path: /mnt/datasets/DeepCT/dataset_data/q_features_all/distinct_features_nonTreated.qcfiltered.txt
+    },
+    batch_size: 256,
+    device: 'cuda:0',
+    data_parallel: False,
+    n_cell_types: 794,
+    center_bin: 200, 
+    reference_sequence: !obj:selene_sdk.sequences.Genome {
+            input_path: /mnt/datasets/DeepCT/male.hg19.fasta
+    },
+    write_mem_limit: 1000
+}
+
+variant_effect_prediction: {
+    vcf_files: ['/home/msindeeva/DeepCT/An_etal.snv.hg19.TSS_flank50Kbp.vcf', '/home/msindeeva/DeepCT/Zhou_etal.snv.hg19.TSS_flank50Kbp.vcf'],
+    output_dir: /home/msindeeva/DeepCT/predictions/40_features_q_mpi_highQCsamples,
+    fdr: 0.1,
+}
+
+region_prediction: {
+    output_dir: /home/msindeeva/DeepCT/predictions/,
+    chrom: 'chr17',
+    region: [2112813, 2122813],
+    alt_position: 2117813,
+    alt_letter: 'G',
+}
+
+random_seed: 1447
+...
