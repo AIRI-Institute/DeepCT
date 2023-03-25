@@ -8,6 +8,7 @@ from selene_sdk.targets import GenomicFeatures, qGenomicFeatures
 from src.transforms import PermuteSequenceChannels
 from torch.utils.data import RandomSampler
 import gc
+import random
 
 _FEATURE_NOT_PRESENT = -1
 
@@ -19,8 +20,10 @@ class EncodeDataset(torch.utils.data.Dataset):
 
     Parameters
     ----------
-    reference_sequence_path : str
-        Path to reference sequence `fasta` file from which to create examples.
+    reference_class : selene.sequence.genome
+        class representing the reference sequence
+    reference_init_kwargs: dict
+        any kwargs to pass to reference_class init function
     distinct_features : list(str)
         List of distinct `cell_type|feature_name|info` combinations available,
         e.g. `["K562|ZBTB33|None", "HCF|DNase|None", "HUVEC|DNase|None"]`.
@@ -33,10 +36,6 @@ class EncodeDataset(torch.utils.data.Dataset):
     intervals : list(tuple)
         Intervals to sample from in the format `(chrom, start, end)`,
         e.g. [("chr1", 550, 590), ("chr2", 6100, 6315)].
-    cell_wise : bool
-        Whether the dataset is supposed to return samples cell-wise,
-        i.e. whether samples are `(sequence, cell_type, feature_values, feature_mask)`
-        or `(sequence, feature_cell_values)`
     transform : callable, optional
         A callback function that takes `sequence, cell_type,
         feature_values, feature_mask` as arguments and returns
@@ -54,8 +53,7 @@ class EncodeDataset(torch.utils.data.Dataset):
     strand : str
         Default is '+'. Strand to sample from.
     multi_ct_target : bool, optional
-        Default is False. Make samples positional, like with cell_wise=False but
-        fetch targets as if cell_wise=True and for all cell types at once, i.e.
+        Default is False. Make samples positional i.e.
         a sample would look like `(sequence, 0.0, target, target_mask)`,
         where `target` and `target_mask` have shape `(n_cell_types, n_target_features)`.
     position_skip : int, optional
@@ -80,8 +78,6 @@ class EncodeDataset(torch.utils.data.Dataset):
         any kwargs to pass to target_class init function
     target_features : list(str)
         List of names of features we aim to predict, e.g. ["CTCF", "DNase"].
-    cell_wise : bool
-        Whether each sample is cell type specific or not
     intervals : list(int)
         A list of intervals that we can draw samples from.
     intervals_length_sums : list(int)
@@ -115,11 +111,11 @@ class EncodeDataset(torch.utils.data.Dataset):
 
     def __init__(
         self,
-        reference_sequence_path,
+        reference_class,
+        reference_init_kwargs,
         distinct_features,
         target_features,
         intervals,
-        cell_wise=True,
         samples_mode=False,
         transform=PermuteSequenceChannels(),
         sequence_length=1000,
@@ -132,7 +128,8 @@ class EncodeDataset(torch.utils.data.Dataset):
         target_class=GenomicFeatures,
         target_init_kwargs=None,
     ):
-        self.reference_sequence_path = reference_sequence_path
+        self.reference_class = reference_class
+        self.reference_init_kwargs = reference_init_kwargs
         self.reference_sequence = self._construct_ref_genome()
 
         self.distinct_features = distinct_features
@@ -152,9 +149,6 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.target_init_kwargs = target_init_kwargs
         self.target = self._construct_target()
 
-        if not cell_wise and multi_ct_target:
-            raise ValueError("cell_wise=True must be used when multi_ct_target=True")
-        self.cell_wise = cell_wise
         self.multi_ct_target = multi_ct_target
         self.transform = transform
 
@@ -162,75 +156,74 @@ class EncodeDataset(torch.utils.data.Dataset):
 
         self.strand = strand
 
-        if self.cell_wise or self.multi_ct_target:
-            self._cell_types = []
-            cell_type_indices_by_feature_index = [
-                [] for i in range(len(self.target_features))
-            ]
-            for distinct_feature_index, distinct_feature in enumerate(
-                self.distinct_features
-            ):
-                feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
-                assert feature_name in self.target_features
-                if cell_type not in self._cell_types:
-                    self._cell_types.append(cell_type)
+        self._cell_types = []
+        cell_type_indices_by_feature_index = [
+            [] for i in range(len(self.target_features))
+        ]
+        for distinct_feature_index, distinct_feature in enumerate(
+            self.distinct_features
+        ):
+            feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
+            assert feature_name in self.target_features
+            if cell_type not in self._cell_types:
+                self._cell_types.append(cell_type)
 
-            self.n_cell_types = len(self._cell_types)
-            self.n_target_features = len(self.target_features)
-            self._feature_indices_by_cell_type_index = np.full(
-                (self.n_cell_types, self.n_target_features), _FEATURE_NOT_PRESENT
+        self.n_cell_types = len(self._cell_types)
+        self.n_target_features = len(self.target_features)
+        self._feature_indices_by_cell_type_index = np.full(
+            (self.n_cell_types, self.n_target_features), _FEATURE_NOT_PRESENT
+        )
+
+        for distinct_feature_index, distinct_feature in enumerate(
+            self.distinct_features
+        ):
+            feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
+            if feature_name not in self.target_features:
+                continue
+            feature_index = self.target_features.index(feature_name)
+            cell_type_index = self._cell_types.index(cell_type)
+            self._feature_indices_by_cell_type_index[cell_type_index][
+                feature_index
+            ] = distinct_feature_index
+
+        if self.multi_ct_target:
+            self.target_mask = (
+                self._feature_indices_by_cell_type_index != _FEATURE_NOT_PRESENT
             )
+            measures_tracks = np.array(self.target_mask)
+            masked_tracks = []
+            if masked_tracks_path is not None:
+                with open(masked_tracks_path) as fin:
+                    for line in fin:
+                        masked_tracks.append(line.strip())
 
-            for distinct_feature_index, distinct_feature in enumerate(
-                self.distinct_features
-            ):
-                feature_name, cell_type = self._parse_distinct_feature(distinct_feature)
-                if feature_name not in self.target_features:
-                    continue
+            for track in masked_tracks:
+                feature_name, cell_type = self._parse_distinct_feature(track)
                 feature_index = self.target_features.index(feature_name)
                 cell_type_index = self._cell_types.index(cell_type)
-                self._feature_indices_by_cell_type_index[cell_type_index][
-                    feature_index
-                ] = distinct_feature_index
 
-            if self.multi_ct_target:
-                self.target_mask = (
-                    self._feature_indices_by_cell_type_index != _FEATURE_NOT_PRESENT
-                )
-                measures_tracks = np.array(self.target_mask)
-                masked_tracks = []
-                if masked_tracks_path is not None:
-                    with open(masked_tracks_path) as fin:
-                        for line in fin:
-                            masked_tracks.append(line.strip())
-    
-                for track in masked_tracks:
-                    feature_name, cell_type = self._parse_distinct_feature(track)
-                    feature_index = self.target_features.index(feature_name)
-                    cell_type_index = self._cell_types.index(cell_type)
+                # sanity check: we assume we are masking here
+                # only those tracks which are measured
+                assert self.target_mask[cell_type_index][feature_index]
 
-                    # sanity check: we assume we are masking here
-                    # only those tracks which are measured
-                    assert self.target_mask[cell_type_index][feature_index]
-
-                    self.target_mask[cell_type_index][feature_index] = False
-                
-                # now we save indices of masked and unmasked measured tracks
-                # this will be used later in transform if we want to invert
-                # mask for these tracks
-                self.masked_measured_tracks = np.nonzero(
-                        np.logical_and(measures_tracks,~self.target_mask)
-                        )
-                self.unmasked_measured_tracks = np.nonzero(
-                        np.logical_and(measures_tracks,self.target_mask)
-                        )
-                
-                # sanity check: we assume number of masked_measured_tracks
-                # is equal to number of tracks which we asked to be masked
-                assert len(self.masked_measured_tracks[0]) == len(masked_tracks)
-                assert len(self.masked_measured_tracks[0]) + \
-                       len(self.unmasked_measured_tracks[0]) == \
-                        len(self.distinct_features)
+                self.target_mask[cell_type_index][feature_index] = False
+            
+            # now we save indices of masked and unmasked measured tracks
+            # this will be used later in transform if we want to invert
+            # mask for these tracks
+            self.masked_measured_tracks = np.nonzero(
+                    np.logical_and(measures_tracks,~self.target_mask)
+                    )
+            self.unmasked_measured_tracks = np.nonzero(
+                    np.logical_and(measures_tracks,self.target_mask)
+                    )
+            
+            # sanity check: we assume number of masked_measured_tracks
+            # is equal to number of tracks which we asked to be masked
+            assert len(self.masked_measured_tracks[0]) == len(masked_tracks)
+            assert len(self.masked_measured_tracks[0]) + \
+                    len(self.unmasked_measured_tracks[0]) == \
+                    len(self.distinct_features)
 
         self.position_skip = position_skip
 
@@ -255,13 +248,10 @@ class EncodeDataset(torch.utils.data.Dataset):
                     self.intervals_length_sums[-1] + interval_length
                 )
 
-        if self.cell_wise:
-            if self.multi_ct_target:
-                self.target_size = self.target_mask.size
-            else:
-                self.target_size = self.n_target_features
+        if self.multi_ct_target:
+            self.target_size = self.target_mask.size
         else:
-            self.target_size = len(self.distinct_features)
+            self.target_size = self.n_target_features
         
         # update transforms: some of transforms may need to get 
         # dataset object 
@@ -281,7 +271,7 @@ class EncodeDataset(torch.utils.data.Dataset):
             n_sequences = len(self.samples)
         else:
             n_sequences = self.intervals_length_sums[-1]
-        if not self.cell_wise or self.multi_ct_target:
+        if self.multi_ct_target:
             return n_sequences
         return self.n_cell_types * n_sequences
 
@@ -292,16 +282,22 @@ class EncodeDataset(torch.utils.data.Dataset):
         else:
             chrom, pos, cell_type_idx = self._get_chrom_pos_cell_by_idx(idx)
             retrieved_sample = self._retrieve(chrom, pos, cell_type_idx)
+            if retrieved_sample is None: # for some ids we fail to retrieve sequence
+                                         # i.e. if interval center - radius_bin < 0
+                                         # in this case we try to resample
+                random.seed(idx)
+                while retrieved_sample is None:
+                    current_idx = random.randint(0,len(self)-1)
+                    chrom, pos, cell_type_idx = self._get_chrom_pos_cell_by_idx(current_idx)
+                    retrieved_sample = self._retrieve(chrom, pos, cell_type_idx)
+
         if self.transform is not None:
             retrieved_sample = self.transform(retrieved_sample)
-        if self.cell_wise:
-            return retrieved_sample
-        retrieved_seq = retrieved_sample[0]
-        retrieved_target = retrieved_sample[2]
-        return retrieved_seq, retrieved_target
+            
+        return retrieved_sample
     
     def _get_sample_cell_by_idx(self, idx):
-        if self.cell_wise and not self.multi_ct_target:
+        if not self.multi_ct_target:
             cell_type_idx = idx % self.n_cell_types
             sample_idx = idx // self.n_cell_types
         else:
@@ -341,7 +337,7 @@ class EncodeDataset(torch.utils.data.Dataset):
             Chromosome identifier, position in the chromosome, cell type
         """
 
-        if self.cell_wise and not self.multi_ct_target:
+        if not self.multi_ct_target:
             cell_type_idx = idx % self.n_cell_types
             position_idx = idx // self.n_cell_types
         else:
@@ -405,49 +401,55 @@ class EncodeDataset(torch.utils.data.Dataset):
 
         if not self._check_retrieved_sequence(retrieved_seq, chrom, position):
             return None
+        
+        result = (retrieved_seq, cell_type, target, target_mask)
+        return result
 
-        return retrieved_seq, cell_type, target, target_mask
+        # try: 
+        #     retrieved_seq["cell_type"] = cell_type
+        #     retrieved_seq["target"] = target
+        #     retrieved_seq["target_mask"] = target_mask
+        #     return retrieved_seq
+        # except IndexError:
+        #     return {
+        #         "seq" : retrieved_seq,
+        #         "cell_type" : cell_type,
+        #         "target" : target,
+        #         "target_mask" :  target_mask,
+        #     }
 
     def _track_vector_to_target(self, track_vector, cell_type_idx=None):
-        if self.cell_wise:
-            if self.multi_ct_target:
-                target = []
-                for cell_type_idx in range(self.n_cell_types):
-                    ct_target_idx = self._feature_indices_by_cell_type_index[
-                        cell_type_idx
-                    ]
-                    ct_target = track_vector[..., ct_target_idx].astype(np.float32)
-                    target.append(ct_target)
-                target = np.array(target).astype(np.float32)
-                target_mask = self.target_mask
-                cell_type = 0.0
-            else:
-                target_idx = self._feature_indices_by_cell_type_index[cell_type_idx]
-                target = track_vector[..., target_idx].astype(np.float32)
-                target_mask = target_idx != _FEATURE_NOT_PRESENT
-                cell_type = np.zeros(self.n_cell_types, dtype=np.float32)
-                cell_type[cell_type_idx] = 1
+        if self.multi_ct_target:
+            target = []
+            for cell_type_idx in range(self.n_cell_types):
+                ct_target_idx = self._feature_indices_by_cell_type_index[
+                    cell_type_idx
+                ]
+                ct_target = track_vector[..., ct_target_idx].astype(np.float32)
+                target.append(ct_target)
+            target = np.array(target).astype(np.float32)
+            target_mask = self.target_mask
+            cell_type = 0.0
         else:
-            target = track_vector.astype(np.float32)
-            target_mask = np.ones_like(target)
-            cell_type = None
+            target_idx = self._feature_indices_by_cell_type_index[cell_type_idx]
+            target = track_vector[..., target_idx].astype(np.float32)
+            target_mask = target_idx != _FEATURE_NOT_PRESENT
+            cell_type = np.zeros(self.n_cell_types, dtype=np.float32)
+            cell_type[cell_type_idx] = 1
         if target.shape != target_mask.shape:
             target_mask = np.repeat(np.expand_dims(target_mask, axis=1), target.shape[1], axis=1)
         return target, target_mask, cell_type
 
     def _target_to_track_vector(self, target):
-        if self.cell_wise:
-            if not self.multi_ct_target:
-                raise ValueError('Impossible to recover a vector of tracks \
+        if not self.multi_ct_target:
+            raise ValueError('Impossible to recover a vector of tracks \
                     from a single cell type sample')
-            track_vector = np.full(len(self.distinct_features), _FEATURE_NOT_PRESENT)
-            for cell_type_idx in range(target.shape[0]):
-                for feature_idx in range(target.shape[1]):
-                    track_vector_idx = self._feature_indices_by_cell_type_index[cell_type_idx, feature_idx]
-                    if track_vector_idx != _FEATURE_NOT_PRESENT:
-                        track_vector[track_vector_idx] = target[cell_type_idx, feature_idx]
-        else:
-            track_vector = target
+        track_vector = np.full(len(self.distinct_features), _FEATURE_NOT_PRESENT)
+        for cell_type_idx in range(target.shape[0]):
+            for feature_idx in range(target.shape[1]):
+                track_vector_idx = self._feature_indices_by_cell_type_index[cell_type_idx, feature_idx]
+                if track_vector_idx != _FEATURE_NOT_PRESENT:
+                    track_vector[track_vector_idx] = target[cell_type_idx, feature_idx]
         return track_vector
 
     def _check_retrieved_sequence(self, sequence, chrom, position) -> bool:
@@ -459,6 +461,12 @@ class EncodeDataset(torch.utils.data.Dataset):
                 An array of shape [sequence_length, alphabet_size], defines a sequence.
 
         """
+        try:
+            sequence.shape # will work if sequence is 1-hot encoded but fails for tokens
+        except:
+            # TODO maybe implement some other checks for tokens
+            return sequence is not None
+
         if sequence.shape[0] == 0:
             # logger.info(
             print(
@@ -485,7 +493,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         return True
 
     def _construct_ref_genome(self):
-        return Genome(self.reference_sequence_path)
+        return self.reference_class(**self.reference_init_kwargs)
 
     def _construct_target(self):
         return self.target_class(**self.target_init_kwargs)
@@ -660,3 +668,5 @@ def encode_worker_init_fn(worker_id):
     # some tests indicate that after re-initialization of the dataset unused data loader are not
     # cleared from memory. I hope this will fix this problem
     gc.collect()
+
+# def collate_fn():
