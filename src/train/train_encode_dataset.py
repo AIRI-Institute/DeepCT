@@ -212,6 +212,7 @@ class TrainEncodeDatasetModel(object):
         data_parallel=False,
         logging_verbosity=2,
         checkpoint_resume=None,
+        dnalm_checkpoint_resume=None,
         metrics=dict(roc_auc=roc_auc_score, average_precision=average_precision_score),
         metrics_transforms=dict(roc_auc=None, average_precision=None),
         log_confusion_matrix=True,
@@ -234,7 +235,7 @@ class TrainEncodeDatasetModel(object):
                 scheduler_kwargs = dict()
             self.scheduler = scheduler_class(self.optimizer, **scheduler_kwargs)
 
-        self.masked_targets = train_loader.dataset.cell_wise
+        self.masked_targets = True # TODO: refactor, because from March 2023 it is always == True
         self.batch_size = train_loader.batch_size
         self.n_epochs = n_epochs
         self.nth_step_report_stats = report_stats_every_n_steps
@@ -316,6 +317,18 @@ class TrainEncodeDatasetModel(object):
         # TODO: Should this be set when it is used later? Would need to if we want to
         # train model 2x in one run.
         self._min_loss = float("inf")
+
+        if dnalm_checkpoint_resume is not None and checkpoint_resume is not None:
+            raise NotImplementedError("Should specify either dnalm_checkpoint_resume or checkpoint_resume, not both of them!")
+
+        if dnalm_checkpoint_resume is not None:
+            logger.info(f"Loading DNALM checkpoint from {dnalm_checkpoint_resume}")
+            checkpoint = torch.load(dnalm_checkpoint_resume, map_location='cpu')
+            missing_k, unexpected_k = self.model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+            if len(missing_k) != 0:
+                logger.info(f'{missing_k} were not loaded from checkpoint! These parameters were randomly initialized.')
+            if len(unexpected_k) != 0:
+                logger.info(f'{unexpected_k} were found in checkpoint, but model is not expecting them!')
 
         if checkpoint_resume is not None:
             checkpoint = torch.load(
@@ -445,7 +458,7 @@ class TrainEncodeDatasetModel(object):
                     checkpoint_basename = "checkpoint"
                     if (
                         self.save_new_checkpoints is not None
-                        and self.save_new_checkpoints >= total_steps
+                        and  total_steps >= self.save_new_checkpoints
                     ):
                         checkpoint_basename = "checkpoint-{0}".format(
                             strftime("%m%d%H%M%S")
@@ -482,14 +495,23 @@ class TrainEncodeDatasetModel(object):
         self.model.train()
 
         if self.masked_targets:
-            # retrieved_seq, cell_type, target, target_mask
-            sequence_batch = batch[0].to(self.device)
             cell_type_batch = batch[1].to(self.device)
             targets = batch[2].to(self.device)
             target_mask = batch[3].to(self.device)
 
-            outputs = self.model(sequence_batch, cell_type_batch)
+            try:
+                sequence_batch = batch[0].to(self.device)
+                one_hot_seq_encoding = True
+            except AttributeError: # In DNALM setup sequence_batch is a dict
+                sequence_batch = {k:v.to(self.device) for k,v in batch[0].items()}
+                one_hot_seq_encoding = False
+
+            if one_hot_seq_encoding:
+                outputs = self.model(sequence_batch, cell_type_batch)
+            else:
+                outputs = self.model(**sequence_batch)
             self.criterion.weight = target_mask
+
         else:
             # retrieved_seq, target
             sequence_batch = batch[0].to(self.device)
@@ -646,10 +668,16 @@ class TrainEncodeDatasetModel(object):
 
         for batch in tqdm(data_loader):
             if self.masked_targets:
-                sequence_batch = batch[0].to(self.device)
+                # sequence_batch = batch[0].to(self.device)
                 cell_type_batch = batch[1].to(self.device)
                 targets = batch[2].to(self.device)
                 target_mask = batch[3].to(self.device)
+                try:
+                    sequence_batch = batch[0].to(self.device)
+                    one_hot_seq_encoding = True
+                except AttributeError: # In DNALM setup sequence_batch is a dict
+                    sequence_batch = {k:v.to(self.device) for k,v in batch[0].items()}
+                    one_hot_seq_encoding = False
             else:
                 # retrieved_seq, target
                 sequence_batch = batch[0].to(self.device)
@@ -657,7 +685,11 @@ class TrainEncodeDatasetModel(object):
 
             with torch.no_grad():
                 if self.masked_targets:
-                    outputs = self.model(sequence_batch, cell_type_batch)
+                    if one_hot_seq_encoding:
+                        outputs = self.model(sequence_batch, cell_type_batch)
+                    else:
+                        outputs = self.model(**sequence_batch)
+
                     self.criterion.weight = target_mask
                 else:
                     outputs = self.model(sequence_batch)
