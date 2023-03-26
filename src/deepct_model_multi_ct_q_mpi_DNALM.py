@@ -47,7 +47,7 @@ class BertForSequenceClassification(BertPreTrainedModel):
         self._n_cell_types = n_cell_types
         self.n_genomic_features = n_genomic_features
 
-        CLS_embedding_length = 768
+        CLS_embedding_length = bert_config.hidden_size
         
         self.sequence_net = nn.Sequential(
             nn.Linear(CLS_embedding_length, sequence_embedding_length),
