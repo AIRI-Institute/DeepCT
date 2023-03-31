@@ -9,8 +9,10 @@ from src.transforms import PermuteSequenceChannels
 from torch.utils.data import RandomSampler
 import gc
 import random
+from tqdm import trange
 
 _FEATURE_NOT_PRESENT = -1
+import h5py
 
 class EncodeDataset(torch.utils.data.Dataset):
     """
@@ -65,6 +67,8 @@ class EncodeDataset(torch.utils.data.Dataset):
         in distinct_features list). Target_mask will be set to False for 
         these tracks. If set to None no tracks will be masked except 
         unmeasured tracks 
+    cash_file_path : str or None, optional (default is None)
+        path to hdf5 cash file containig pre-computed inputs and targets
 
     Attributes
     ----------
@@ -127,6 +131,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         masked_tracks_path=None,
         target_class=GenomicFeatures,
         target_init_kwargs=None,
+        cash_file_path=None
     ):
         self.reference_class = reference_class
         self.reference_init_kwargs = reference_init_kwargs
@@ -150,6 +155,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.target = self._construct_target()
 
         self.multi_ct_target = multi_ct_target
+        assert self.multi_ct_target , "From 2023, new releases accept multi_ct_target only"
         self.transform = transform
 
         self.sequence_length = sequence_length
@@ -265,17 +271,29 @@ class EncodeDataset(torch.utils.data.Dataset):
                     print ("Info: set_tracks_thresholds set for transform ",str(tr))
                 except AttributeError:
                     pass
-
+        
+        if cash_file_path != None:
+            self.cash_file = h5py.open(cash_file_path,"r")
+        else:
+            self.cash_file = None
+        
     def __len__(self):
+        if self.cash_file is not None:
+            return len(self.cash_file["cell_type"])
+        
         if self.samples_mode:
             n_sequences = len(self.samples)
         else:
             n_sequences = self.intervals_length_sums[-1]
         if self.multi_ct_target:
             return n_sequences
-        return self.n_cell_types * n_sequences
+        else:
+            print ("Error: from 2023 only multi_ct_target supported!")
+            raise NotImplementedError
 
     def __getitem__(self, idx):
+        if self.cash_file is not None:
+            return self._retrieve_sample_from_cash(idx)
         if self.samples_mode:
             sample_idx, cell_type_idx = self._get_sample_cell_by_idx(idx)
             retrieved_sample = self._retrieve_sample_by_idx(sample_idx, cell_type_idx)
@@ -304,6 +322,17 @@ class EncodeDataset(torch.utils.data.Dataset):
             cell_type_idx = 0
             sample_idx = idx
         return sample_idx, cell_type_idx
+    
+    def _retrieve_sample_from_cash(self, sample_idx):
+        cell_type = self.cash_file["cell_type"][idx]
+        target = self.cash_file["target"][idx]
+        g_seq = self.cah_file["sequence"]
+        retrieved_seq = {}
+        for key in g_seq.keys():
+            retrieved_seq[key] = g_seq[key][index]
+
+        return retrieved_seq, cell_type, target, self.target_mask
+
 
     def _retrieve_sample_by_idx(self, sample_idx, cell_type_idx):
         chrom, start, end, chrom_sample_idx = self.samples[sample_idx]
@@ -510,8 +539,58 @@ class EncodeDataset(torch.utils.data.Dataset):
         if addon != "None":
             cell_type = cell_type + "_" + addon
         return feature_name, cell_type
+    
+    def export(self, fname, fmode="a"):
+        """
+        export current dataset as hdf5 file
+        fname - name of the output file
+        fmode - file mode for file open. If fmode == 'a' will append to current file
+        hdf5key - name of the hdf5 file key where dataset should be saved
+        """
 
+        print (f"Export dataset {hdf5key} with length {len(self)} to file {fname}")
+        retrieved_seq, cell_type, target, target_mask = self.__getitem__(0)
+        
+        try:
+            seq_keys = retrieved_seq.keys()
+            tokenized_data = True
+        except AttributeError:
+            tokenized_data = False
 
+        with h5py.File(fname, fmode) as g:
+            cell_type = g.create_dataset("cell_type", 
+                                    shape=(len(self),), 
+                                    )
+            target = g.create_dataset("target",
+                                      shape=[len(self)] + list(target.shape),
+                                      dtype=target.dtype
+                                      )
+            # target_mask = g.create_dataset("target_mask",
+            #                           shape=[len(self)] + list(target_mask.shape),
+            #                           dtype=target_mask.dtype
+            #                           )
+            if tokenized_data:
+                g_seq = g.create_group("sequence")
+                for key,val in retrieved_seq.items():
+                    g_seq.create_dataset(key,
+                                      shape=[len(self)] + list(val.shape),
+                                      dtype=val.dtype
+                                    )
+            else:
+                print ("Export of non-tokenized dataset is not supported")
+                raise NotImplementedError
+            
+            for index in trange(len(self)):
+                retrieved_seq, cell_type, target, target_mask = self.__getitem__(index)
+                g["cell_type"][index] = cell_type
+                g["target"][index,:] = target
+                if tokenized_data:
+                    for key,val in retrieved_seq.items():
+                        g_seq[key][index,:] = val
+                else:
+                    print ("Export of non-tokenized dataset is not supported")
+                    raise NotImplementedError
+                    
 class LargeRandomSampler(torch.utils.data.RandomSampler):
     """
     Samples elements randomly by splitting the dataset into chunks and permuting
@@ -650,7 +729,7 @@ class SubsetRandomSampler(torch.utils.data.SubsetRandomSampler):
             dtype=torch.int64,
             generator=generator,
         ).tolist()
-
+    
 def encode_worker_init_fn(worker_id):
     """Initialization function for multi-processing DataLoader worker"""
     worker_info = torch.utils.data.get_worker_info()
