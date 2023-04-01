@@ -35,6 +35,7 @@ class BertForSequenceClassification(BertPreTrainedModel):
                 final_embedding_length,
                 n_genomic_features,
                 dropout_rate=0.2,
+                return_embeddings=False,
             ):
         bert_config = AutoConfig.from_pretrained(bert_config)
         super().__init__(bert_config)
@@ -47,62 +48,66 @@ class BertForSequenceClassification(BertPreTrainedModel):
         self._n_cell_types = n_cell_types
         self.n_genomic_features = n_genomic_features
 
-        CLS_embedding_length = bert_config.hidden_size
+        self.CLS_embedding_length = bert_config.hidden_size
+
+        self.return_embeddings = return_embeddings
+
+        if not self.return_embeddings:
         
-        self.sequence_net = nn.Sequential(
-            nn.Linear(CLS_embedding_length, sequence_embedding_length),
-            nn.ReLU(inplace=True),
-        )
+            self.sequence_net = nn.Sequential(
+                nn.Linear(self.CLS_embedding_length, sequence_embedding_length),
+                nn.ReLU(inplace=True),
+            )
 
-        self.cell_type_net = nn.Sequential(
-            nn.Linear(n_cell_types, cell_type_embedding_length),
-        )
+            self.cell_type_net = nn.Sequential(
+                nn.Linear(n_cell_types, cell_type_embedding_length),
+            )
 
-        self.seq_regressor = nn.Sequential(
-            nn.Linear(sequence_embedding_length, sequence_embedding_length),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm1d(sequence_embedding_length),
-            nn.Linear(sequence_embedding_length, sequence_embedding_length),
-            nn.ReLU(inplace=True),
-            nn.Linear(sequence_embedding_length, sequence_embedding_length),
-            nn.ReLU(inplace=True),
-            nn.Linear(sequence_embedding_length, n_genomic_features),
-            # sigmoid turned off for loss numerical stability
-            # nn.Sigmoid(),
-        )
+            self.seq_regressor = nn.Sequential(
+                nn.Linear(sequence_embedding_length, sequence_embedding_length),
+                nn.ReLU(inplace=True),
+                nn.BatchNorm1d(sequence_embedding_length),
+                nn.Linear(sequence_embedding_length, sequence_embedding_length),
+                nn.ReLU(inplace=True),
+                nn.Linear(sequence_embedding_length, sequence_embedding_length),
+                nn.ReLU(inplace=True),
+                nn.Linear(sequence_embedding_length, n_genomic_features),
+                # sigmoid turned off for loss numerical stability
+                # nn.Sigmoid(),
+            )
 
-        self.ct_regressor = nn.Sequential(
-            nn.Linear(
-                sequence_embedding_length + cell_type_embedding_length,
-                final_embedding_length,
-            ),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm1d(final_embedding_length),
-            nn.Linear(final_embedding_length, final_embedding_length),
-            nn.ReLU(inplace=True),
-            nn.Linear(final_embedding_length, final_embedding_length),
-            nn.ReLU(inplace=True),
-            nn.Linear(final_embedding_length, final_embedding_length),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm1d(final_embedding_length),
-            nn.Linear(final_embedding_length, final_embedding_length),
-            nn.ReLU(inplace=True),
-            nn.Linear(final_embedding_length, final_embedding_length),
-            nn.ReLU(inplace=True),
-            nn.Linear(final_embedding_length, final_embedding_length),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm1d(final_embedding_length),
-            nn.Linear(final_embedding_length, n_genomic_features),
-            # sigmoid turned off for loss numerical stability
-            # nn.Sigmoid(),
-        )
+            self.ct_regressor = nn.Sequential(
+                nn.Linear(
+                    sequence_embedding_length + cell_type_embedding_length,
+                    final_embedding_length,
+                ),
+                nn.ReLU(inplace=True),
+                nn.BatchNorm1d(final_embedding_length),
+                nn.Linear(final_embedding_length, final_embedding_length),
+                nn.ReLU(inplace=True),
+                nn.Linear(final_embedding_length, final_embedding_length),
+                nn.ReLU(inplace=True),
+                nn.Linear(final_embedding_length, final_embedding_length),
+                nn.ReLU(inplace=True),
+                nn.BatchNorm1d(final_embedding_length),
+                nn.Linear(final_embedding_length, final_embedding_length),
+                nn.ReLU(inplace=True),
+                nn.Linear(final_embedding_length, final_embedding_length),
+                nn.ReLU(inplace=True),
+                nn.Linear(final_embedding_length, final_embedding_length),
+                nn.ReLU(inplace=True),
+                nn.BatchNorm1d(final_embedding_length),
+                nn.Linear(final_embedding_length, n_genomic_features),
+                # sigmoid turned off for loss numerical stability
+                # nn.Sigmoid(),
+            )
 
 
-        # classifier_dropout = (
-        #     config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
-        # )
-        self.dropout = nn.Dropout(dropout_rate)
-        # self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+            # classifier_dropout = (
+            #     config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+            # )
+            self.dropout = nn.Dropout(dropout_rate)
+            # self.classifier = nn.Linear(config.hidden_size, config.num_labels)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -129,8 +134,6 @@ class BertForSequenceClassification(BertPreTrainedModel):
 
         batch_size = input_ids.size(0)
 
-        cell_type_one_hots = torch.eye(self._n_cell_types).to(input_ids.device)
-
         # sequence_out = self.conv_net(sequence_batch)
         
         seq_outputs = self.bert(
@@ -145,7 +148,12 @@ class BertForSequenceClassification(BertPreTrainedModel):
             return_dict=return_dict,
         )
         pooled_output = seq_outputs[1]
+        if self.return_embeddings:
+            return pooled_output
+        
         sequence_out = self.dropout(pooled_output)
+
+        cell_type_one_hots = torch.eye(self._n_cell_types).to(input_ids.device)
 
 
         # reshaped_sequence_out = sequence_out.view(
