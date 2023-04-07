@@ -115,11 +115,11 @@ class EncodeDataset(torch.utils.data.Dataset):
 
     def __init__(
         self,
-        reference_class,
-        reference_init_kwargs,
         distinct_features,
         target_features,
-        intervals,
+        intervals=None,
+        reference_class=Genome,
+        reference_init_kwargs={},
         samples_mode=False,
         transform=PermuteSequenceChannels(),
         sequence_length=1000,
@@ -133,9 +133,13 @@ class EncodeDataset(torch.utils.data.Dataset):
         target_init_kwargs=None,
         cash_file_path=None
     ):
-        self.reference_class = reference_class
-        self.reference_init_kwargs = reference_init_kwargs
-        self.reference_sequence = self._construct_ref_genome()
+        if cash_file_path != None:
+            self.cash_file = h5py.File(cash_file_path,"r")
+        else:
+            self.cash_file = None
+            self.reference_class = reference_class
+            self.reference_init_kwargs = reference_init_kwargs
+            self.reference_sequence = self._construct_ref_genome()
 
         self.distinct_features = distinct_features
         self.target_features = target_features
@@ -149,10 +153,11 @@ class EncodeDataset(torch.utils.data.Dataset):
                 if self._parse_distinct_feature(i)[0] in self.target_features
             ]
         
-        self.target_class = target_class
-        target_init_kwargs["features"] = self.distinct_features
-        self.target_init_kwargs = target_init_kwargs
-        self.target = self._construct_target()
+        if self.cash_file is None:
+            self.target_class = target_class
+            target_init_kwargs["features"] = self.distinct_features
+            self.target_init_kwargs = target_init_kwargs
+            self.target = self._construct_target()
 
         self.multi_ct_target = multi_ct_target
         assert self.multi_ct_target , "From 2023, new releases accept multi_ct_target only"
@@ -192,51 +197,50 @@ class EncodeDataset(torch.utils.data.Dataset):
                 feature_index
             ] = distinct_feature_index
 
-        if self.multi_ct_target:
-            self.target_mask = (
-                self._feature_indices_by_cell_type_index != _FEATURE_NOT_PRESENT
-            )
-            measures_tracks = np.array(self.target_mask)
-            masked_tracks = []
-            if masked_tracks_path is not None:
-                with open(masked_tracks_path) as fin:
-                    for line in fin:
-                        masked_tracks.append(line.strip())
+        self.target_mask = (
+            self._feature_indices_by_cell_type_index != _FEATURE_NOT_PRESENT
+        )
+        measures_tracks = np.array(self.target_mask)
+        masked_tracks = []
+        if masked_tracks_path is not None:
+            with open(masked_tracks_path) as fin:
+                for line in fin:
+                    masked_tracks.append(line.strip())
 
-            for track in masked_tracks:
-                feature_name, cell_type = self._parse_distinct_feature(track)
-                feature_index = self.target_features.index(feature_name)
-                cell_type_index = self._cell_types.index(cell_type)
+        for track in masked_tracks:
+            feature_name, cell_type = self._parse_distinct_feature(track)
+            feature_index = self.target_features.index(feature_name)
+            cell_type_index = self._cell_types.index(cell_type)
 
-                # sanity check: we assume we are masking here
-                # only those tracks which are measured
-                assert self.target_mask[cell_type_index][feature_index]
+            # sanity check: we assume we are masking here
+            # only those tracks which are measured
+            assert self.target_mask[cell_type_index][feature_index]
 
-                self.target_mask[cell_type_index][feature_index] = False
-            
-            # now we save indices of masked and unmasked measured tracks
-            # this will be used later in transform if we want to invert
-            # mask for these tracks
-            self.masked_measured_tracks = np.nonzero(
-                    np.logical_and(measures_tracks,~self.target_mask)
-                    )
-            self.unmasked_measured_tracks = np.nonzero(
-                    np.logical_and(measures_tracks,self.target_mask)
-                    )
-            
-            # sanity check: we assume number of masked_measured_tracks
-            # is equal to number of tracks which we asked to be masked
-            assert len(self.masked_measured_tracks[0]) == len(masked_tracks)
-            assert len(self.masked_measured_tracks[0]) + \
-                    len(self.unmasked_measured_tracks[0]) == \
-                    len(self.distinct_features)
+            self.target_mask[cell_type_index][feature_index] = False
+        
+        # now we save indices of masked and unmasked measured tracks
+        # this will be used later in transform if we want to invert
+        # mask for these tracks
+        self.masked_measured_tracks = np.nonzero(
+                np.logical_and(measures_tracks,~self.target_mask)
+                )
+        self.unmasked_measured_tracks = np.nonzero(
+                np.logical_and(measures_tracks,self.target_mask)
+                )
+        
+        # sanity check: we assume number of masked_measured_tracks
+        # is equal to number of tracks which we asked to be masked
+        assert len(self.masked_measured_tracks[0]) == len(masked_tracks)
+        assert len(self.masked_measured_tracks[0]) + \
+                len(self.unmasked_measured_tracks[0]) == \
+                len(self.distinct_features)
 
-        self.position_skip = position_skip
 
         self.samples_mode = samples_mode
         if self.samples_mode:
             self.samples = intervals
-        else:
+        elif self.cash_file is None:
+            self.position_skip = position_skip
             self.center_bin_to_predict = center_bin_to_predict
             bin_radius = int(self.center_bin_to_predict / 2)
             self._start_radius = bin_radius
@@ -254,14 +258,10 @@ class EncodeDataset(torch.utils.data.Dataset):
                     self.intervals_length_sums[-1] + interval_length
                 )
 
-        if self.multi_ct_target:
-            self.target_size = self.target_mask.size
-        else:
-            self.target_size = self.n_target_features
+        self.target_size = self.target_mask.size
         
         # update transforms: some of transforms may need to get 
         # dataset object 
-
         try: # transform might be an object with method set_masks
                 self.transform.set_tracks_thresholds(self)
         except AttributeError:
@@ -271,15 +271,10 @@ class EncodeDataset(torch.utils.data.Dataset):
                     print ("Info: set_tracks_thresholds set for transform ",str(tr))
                 except AttributeError:
                     pass
-        
-        if cash_file_path != None:
-            self.cash_file = h5py.open(cash_file_path,"r")
-        else:
-            self.cash_file = None
-        
+                
     def __len__(self):
         if self.cash_file is not None:
-            return len(self.cash_file["cell_type"])
+            return len(self.cash_file["target"])
         
         if self.samples_mode:
             n_sequences = len(self.samples)
@@ -324,12 +319,21 @@ class EncodeDataset(torch.utils.data.Dataset):
         return sample_idx, cell_type_idx
     
     def _retrieve_sample_from_cash(self, sample_idx):
-        cell_type = self.cash_file["cell_type"][idx]
-        target = self.cash_file["target"][idx]
-        g_seq = self.cah_file["sequence"]
-        retrieved_seq = {}
-        for key in g_seq.keys():
-            retrieved_seq[key] = g_seq[key][index]
+        if "cell_type" in self.cash_file.keys():
+            cell_type = self.cash_file["cell_type"][sample_idx]
+        else:
+            assert self.multi_ct_target, "cash files w/o cell_type info are only implemented for multi_ct_target"
+            cell_type = 0.0
+ 
+        target = self.cash_file["target"][sample_idx]
+        g_seq = self.cash_file["sequence"]
+
+        if "embedding" in g_seq.keys():
+            retrieved_seq = g_seq["embedding"][sample_idx]
+        else:
+            retrieved_seq = {}
+            for key in g_seq.keys():
+                retrieved_seq[key] = g_seq[key][sample_idx]
 
         return retrieved_seq, cell_type, target, self.target_mask
 
@@ -734,15 +738,16 @@ def encode_worker_init_fn(worker_id):
     """Initialization function for multi-processing DataLoader worker"""
     worker_info = torch.utils.data.get_worker_info()
     dataset = worker_info.dataset
-    # reconstruct reference genome object
-    # because it reads from fasta `pyfaidx`
-    # which is not multiprocessing-safe, see:
-    # https://github.com/mdshw5/pyfaidx/issues/167#issuecomment-667591513
-    dataset.reference_sequence = dataset._construct_ref_genome()
-    # and similarly for targets (as they use bigWig file handlers
-    # for quantitative features, which are not multiprocessing-safe,
-    # see https://github.com/deeptools/pyBigWig/issues/74#issuecomment-439520821 )
-    dataset.target = dataset._construct_target()
+    if dataset.cash_file is None:
+        # reconstruct reference genome object
+        # because it reads from fasta `pyfaidx`
+        # which is not multiprocessing-safe, see:
+        # https://github.com/mdshw5/pyfaidx/issues/167#issuecomment-667591513
+        dataset.reference_sequence = dataset._construct_ref_genome()
+        # and similarly for targets (as they use bigWig file handlers
+        # for quantitative features, which are not multiprocessing-safe,
+        # see https://github.com/deeptools/pyBigWig/issues/74#issuecomment-439520821 )
+        dataset.target = dataset._construct_target()
     
     # some tests indicate that after re-initialization of the dataset unused data loader are not
     # cleared from memory. I hope this will fix this problem
