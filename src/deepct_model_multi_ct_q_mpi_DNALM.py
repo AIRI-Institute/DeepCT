@@ -3,14 +3,9 @@ DeepCT architecture without Sigmoid layer
 for multiple cell type per position computation at once
 with quantitative features (TODO: Add our names).
 """
-import os
-
-import numpy as np
 import torch
 import torch.nn as nn
 from torch import mean
-from torch.nn import MSELoss
-from torch.utils.tensorboard import SummaryWriter
 from dnalm.src.gena_lm.modeling_bert import *
 import dnalm.src.gena_lm.modeling_bert as modeling_bert
 from transformers import AutoConfig
@@ -135,21 +130,32 @@ class BertForSequenceClassification(BertPreTrainedModel):
         batch_size = input_ids.size(0)
 
         # sequence_out = self.conv_net(sequence_batch)
-        
-        seq_outputs = self.bert(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-        pooled_output = seq_outputs[1]
         if self.return_embeddings:
-            return pooled_output
+            seq_outputs = self.bert(
+                input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+                output_attentions=output_attentions,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            return (seq_outputs["hidden_states"])
+        else:
+            seq_outputs = self.bert(
+                input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+            pooled_output = seq_outputs[1]
         
         sequence_out = self.dropout(pooled_output)
 

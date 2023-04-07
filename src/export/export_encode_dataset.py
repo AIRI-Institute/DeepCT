@@ -11,6 +11,7 @@ from selene_sdk.utils import (
     load_model_from_state_dict,
 )
 from tqdm import tqdm
+from selene_sdk.utils import initialize_logger
 
 logger = logging.getLogger("selene")
 
@@ -117,6 +118,12 @@ class ExportEncodeDatasetModel(object):
 
         os.makedirs(output_dir, exist_ok=True)
         self.output_dir = output_dir
+        
+        initialize_logger(
+            os.path.join(self.output_dir, "{0}.log".format(__name__)),
+            verbosity=logging_verbosity,
+        )
+
 
         if dnalm_checkpoint_resume is not None and checkpoint_resume is not None:
             raise NotImplementedError("Should specify either dnalm_checkpoint_resume or checkpoint_resume, not both of them!")
@@ -164,8 +171,14 @@ class ExportEncodeDatasetModel(object):
                                       )
             g_seq = g.create_group("sequence")
 
-            seq = g_seq.create_dataset("embedding",
-                                      shape=(len(data_loader.dataset), self.seq_emb_length),
+            n_layers = self.model.config.num_hidden_layers
+            hidden_size = self.model.config.hidden_size
+
+            hidden_state_representations = ["CLS","MAX","AVERAGE"]
+            representations = {}
+            for r in hidden_state_representations:
+                representations[r] = g_seq.create_dataset(r,
+                                      shape=(len(data_loader.dataset), n_layers, hidden_size),
                                       dtype=next(self.model.parameters()).detach().cpu().numpy().dtype,
                                     )
             for batch_id,batch in tqdm(enumerate(data_loader)):
@@ -179,10 +192,47 @@ class ExportEncodeDatasetModel(object):
 
                 with torch.no_grad():
                     assert self.model.return_embeddings
-                    outputs = self.model(**sequence_batch).detach().cpu().numpy()
-                    # print (outputs)
-                    seq[batch_st_id:batch_en_id, : ] = outputs
-                    assert seq[batch_st_id:batch_en_id, : ].shape == outputs.shape
+                    
+                    # tuple of size hidden_size+1
+                    outputs = self.model(**sequence_batch)
+                    
+                    CLS_cat = []
+                    AVERAGE_cat = []
+                    MAX_cat = []
+                    for layer in range(1,len(outputs)): # skip first hidden_state                            
+                        # CLS
+                        # batch_size x n_tokens x hidden_state_len --> batch_size x 1  x hidden_state_len
+                        CLS_cat.append(torch.unsqueeze(outputs[layer][:,0,:],1))
+
+                        masked_hs = (outputs[layer] * sequence_batch["attention_mask"].unsqueeze(dim=2))
+                        # size =  torch.Size([batch_size, n_tokens, hiddenst_length])
+
+                        numerator = masked_hs.sum(dim=1)
+                        # size = (batch_size, hiddenst_length)
+
+                        denominator = torch.sum(sequence_batch["attention_mask"], dim=1).unsqueeze(dim=1)
+                        # denominator.size() = torch.Size([batch_size, 1])
+                        masked_average = numerator / denominator
+                        masked_average = masked_average.unsqueeze(dim=1)
+                        # size = [batch_size, 1, hiddenst_length])
+                        
+                        AVERAGE_cat.append(masked_average)
+                        
+                        masked_max = torch.max(masked_hs, dim=1)[0].unsqueeze(dim=1)
+                        # size = [batch_size, 1, hiddenst_length])
+
+                        MAX_cat.append(masked_max)
+                
+                    CLS = torch.cat(CLS_cat,axis=1)
+                    MAX = torch.cat(MAX_cat,axis=1)
+                    AVERAGE = torch.cat(AVERAGE_cat,axis=1)
+
+                    for r in hidden_state_representations:
+                        outputs = eval(r)
+                        outputs = outputs.detach().cpu().numpy()
+                        assert outputs.shape[1:] == (n_layers, hidden_size), "Array shape error for "+r
+                        representations[r][batch_st_id:batch_en_id, : ] = outputs
+                        assert representations[r][batch_st_id:batch_en_id, : ].shape == outputs.shape, "Array shape error for "+r
 
     def export(self):
         """
@@ -199,7 +249,7 @@ class ExportEncodeDatasetModel(object):
                                   self.train_loader,
                                   self.val_loader
                                   ],
-                                  ["test","train","validate"]
+                                  ["test","train","validation"]
                                   ):
             output_file = os.path.join(self.output_dir,
                                        "ds_"+label+"_"+self.file_prefix+".hdf5")

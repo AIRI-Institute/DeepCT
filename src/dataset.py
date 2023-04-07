@@ -67,8 +67,8 @@ class EncodeDataset(torch.utils.data.Dataset):
         in distinct_features list). Target_mask will be set to False for 
         these tracks. If set to None no tracks will be masked except 
         unmeasured tracks 
-    cash_file_path : str or None, optional (default is None)
-        path to hdf5 cash file containig pre-computed inputs and targets
+    cache_file_path : str or None, optional (default is None)
+        path to hdf5 cache file containig pre-computed inputs and targets
 
     Attributes
     ----------
@@ -131,12 +131,12 @@ class EncodeDataset(torch.utils.data.Dataset):
         masked_tracks_path=None,
         target_class=GenomicFeatures,
         target_init_kwargs=None,
-        cash_file_path=None
+        cache_file_path=None
     ):
-        if cash_file_path != None:
-            self.cash_file = h5py.File(cash_file_path,"r")
+        if cache_file_path != None:
+            self.cache_file = h5py.File(cache_file_path,"r")
         else:
-            self.cash_file = None
+            self.cache_file = None
             self.reference_class = reference_class
             self.reference_init_kwargs = reference_init_kwargs
             self.reference_sequence = self._construct_ref_genome()
@@ -153,7 +153,7 @@ class EncodeDataset(torch.utils.data.Dataset):
                 if self._parse_distinct_feature(i)[0] in self.target_features
             ]
         
-        if self.cash_file is None:
+        if self.cache_file is None:
             self.target_class = target_class
             target_init_kwargs["features"] = self.distinct_features
             self.target_init_kwargs = target_init_kwargs
@@ -239,7 +239,7 @@ class EncodeDataset(torch.utils.data.Dataset):
         self.samples_mode = samples_mode
         if self.samples_mode:
             self.samples = intervals
-        elif self.cash_file is None:
+        elif self.cache_file is None:
             self.position_skip = position_skip
             self.center_bin_to_predict = center_bin_to_predict
             bin_radius = int(self.center_bin_to_predict / 2)
@@ -273,8 +273,8 @@ class EncodeDataset(torch.utils.data.Dataset):
                     pass
                 
     def __len__(self):
-        if self.cash_file is not None:
-            return len(self.cash_file["target"])
+        if self.cache_file is not None:
+            return len(self.cache_file["target"])
         
         if self.samples_mode:
             n_sequences = len(self.samples)
@@ -287,8 +287,8 @@ class EncodeDataset(torch.utils.data.Dataset):
             raise NotImplementedError
 
     def __getitem__(self, idx):
-        if self.cash_file is not None:
-            return self._retrieve_sample_from_cash(idx)
+        if self.cache_file is not None:
+            return self._retrieve_sample_from_cache(idx)
         if self.samples_mode:
             sample_idx, cell_type_idx = self._get_sample_cell_by_idx(idx)
             retrieved_sample = self._retrieve_sample_by_idx(sample_idx, cell_type_idx)
@@ -318,18 +318,19 @@ class EncodeDataset(torch.utils.data.Dataset):
             sample_idx = idx
         return sample_idx, cell_type_idx
     
-    def _retrieve_sample_from_cash(self, sample_idx):
-        if "cell_type" in self.cash_file.keys():
-            cell_type = self.cash_file["cell_type"][sample_idx]
+    def _retrieve_sample_from_cache(self, sample_idx):
+        if "cell_type" in self.cache_file.keys():
+            cell_type = self.cache_file["cell_type"][sample_idx]
         else:
-            assert self.multi_ct_target, "cash files w/o cell_type info are only implemented for multi_ct_target"
+            assert self.multi_ct_target, "cache files w/o cell_type info are only implemented for multi_ct_target"
             cell_type = 0.0
  
-        target = self.cash_file["target"][sample_idx]
-        g_seq = self.cash_file["sequence"]
+        target = self.cache_file["target"][sample_idx]
+        g_seq = self.cache_file["sequence"]
 
-        if "embedding" in g_seq.keys():
-            retrieved_seq = g_seq["embedding"][sample_idx]
+        if "CLS" in g_seq.keys():
+            retrieved_seq = g_seq["CLS"][sample_idx] # shape =  (n_layers, hidden_size)
+            retrieved_seq = retrieved_seq[-1] # take last layer
         else:
             retrieved_seq = {}
             for key in g_seq.keys():
@@ -738,7 +739,7 @@ def encode_worker_init_fn(worker_id):
     """Initialization function for multi-processing DataLoader worker"""
     worker_info = torch.utils.data.get_worker_info()
     dataset = worker_info.dataset
-    if dataset.cash_file is None:
+    if dataset.cache_file is None:
         # reconstruct reference genome object
         # because it reads from fasta `pyfaidx`
         # which is not multiprocessing-safe, see:
